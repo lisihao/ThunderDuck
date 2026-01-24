@@ -1,0 +1,42 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Build
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Binaries
+*.out
+test_*
+bench_*
+benchmark_app
+!*.cpp
+
+# Third party libraries (download separately)
+third_party/duckdb/*.dylib
+third_party/duckdb/*.zip
+
+# Generated reports (regenerate with benchmark)
+benchmark_report.md
