@@ -1149,10 +1149,10 @@ private:
         thunderduck::join::JoinResult* join_result =
             thunderduck::join::create_join_result(probe_keys.size());
 
-        // 使用 v2 优化版本 (Robin Hood Hash Join)
+        // 使用 v3 优化版本 (SOA + SIMD + Radix Partitioning)
         for (int i = 0; i < config_.warmup_iterations; ++i) {
             join_result->count = 0;
-            thunderduck::join::hash_join_i32_v2(
+            thunderduck::join::hash_join_i32_v3(
                 build_keys.data(), build_keys.size(),
                 probe_keys.data(), probe_keys.size(),
                 thunderduck::join::JoinType::INNER, join_result);
@@ -1164,7 +1164,7 @@ private:
         for (int i = 0; i < config_.num_iterations; ++i) {
             join_result->count = 0;
             timer.start();
-            match_count = thunderduck::join::hash_join_i32_v2(
+            match_count = thunderduck::join::hash_join_i32_v3(
                 build_keys.data(), build_keys.size(),
                 probe_keys.data(), probe_keys.size(),
                 thunderduck::join::JoinType::INNER, join_result);

@@ -203,6 +203,53 @@ size_t partitioned_hash_join_i32(const int32_t* build_keys, size_t build_count,
                                   JoinType join_type,
                                   JoinResult* result);
 
+// ============================================================================
+// v3.0 优化版本 - 针对 Apple M4 深度优化
+// ============================================================================
+
+/**
+ * Join 配置选项
+ */
+struct JoinConfig {
+    size_t num_threads = 4;           // 并行线程数 (默认使用 P-cores)
+    size_t morsel_size = 2048;        // morsel 大小
+    int radix_bits = 4;               // 分区位数 (16 分区)
+    bool enable_perfect_hash = true;  // 启用完美哈希检测
+    bool enable_prefetch = true;      // 启用软件预取
+};
+
+/**
+ * v3.0 优化版 Hash Join
+ *
+ * 优化特性:
+ * - SOA 哈希表布局 (128-byte 缓存行优化)
+ * - SIMD 批量探测 (ARM Neon)
+ * - Radix Partitioning (L1/L2 缓存友好)
+ * - 完美哈希优化 (小整数键 O(1) 探测)
+ * - Morsel-driven 多核并行
+ *
+ * @param build_keys 构建侧键数组
+ * @param build_count 构建侧数量
+ * @param probe_keys 探测侧键数组
+ * @param probe_count 探测侧数量
+ * @param join_type 连接类型
+ * @param result 输出结果
+ * @return 匹配数量
+ */
+size_t hash_join_i32_v3(const int32_t* build_keys, size_t build_count,
+                         const int32_t* probe_keys, size_t probe_count,
+                         JoinType join_type,
+                         JoinResult* result);
+
+/**
+ * v3.0 带配置版本
+ */
+size_t hash_join_i32_v3_config(const int32_t* build_keys, size_t build_count,
+                                const int32_t* probe_keys, size_t probe_count,
+                                JoinType join_type,
+                                JoinResult* result,
+                                const JoinConfig& config);
+
 } // namespace join
 } // namespace thunderduck
 

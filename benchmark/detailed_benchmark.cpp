@@ -897,7 +897,7 @@ private:
             tc.category = "Join";
             tc.name = "Hash Join (orders-customer)";
             tc.sql = "SELECT COUNT(*) FROM orders o INNER JOIN customer c ON o.o_custkey = c.c_custkey";
-            tc.thunder_op = "hash_join_i32_v2(c_custkey, o_custkey)";
+            tc.thunder_op = "hash_join_i32_v3(c_custkey, o_custkey)";
             tc.data_rows = num_orders_ + num_customers_;
             tc.data_bytes = (num_orders_ + num_customers_) * sizeof(int32_t);
 
@@ -919,7 +919,7 @@ private:
                 thunderduck::join::create_join_result(order_custkey_.size());
             for (int i = 0; i < warmup; ++i) {
                 join_result->count = 0;
-                thunderduck::join::hash_join_i32_v2(
+                thunderduck::join::hash_join_i32_v3(
                     customer_key_.data(), customer_key_.size(),
                     order_custkey_.data(), order_custkey_.size(),
                     thunderduck::join::JoinType::INNER, join_result);
@@ -928,7 +928,7 @@ private:
             for (int i = 0; i < iterations; ++i) {
                 join_result->count = 0;
                 timer.start();
-                thunderduck::join::hash_join_i32_v2(
+                thunderduck::join::hash_join_i32_v3(
                     customer_key_.data(), customer_key_.size(),
                     order_custkey_.data(), order_custkey_.size(),
                     thunderduck::join::JoinType::INNER, join_result);
