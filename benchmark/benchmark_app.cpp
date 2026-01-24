@@ -877,10 +877,10 @@ private:
         result.name = name;
         result.category = category;
 
-        // 使用 v2 优化版本 - 仅计数 (与 DuckDB COUNT(*) 对比)
+        // 使用 v3 优化版本 - 仅计数 (与 DuckDB COUNT(*) 对比)
         // 预热
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::count_i32_v2(data.data(), data.size(),
+            thunderduck::filter::count_i32_v3(data.data(), data.size(),
                 thunderduck::filter::CompareOp::GT, value);
         }
 
@@ -890,7 +890,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::count_i32_v2(data.data(), data.size(),
+            count = thunderduck::filter::count_i32_v3(data.data(), data.size(),
                 thunderduck::filter::CompareOp::GT, value);
             timer.stop();
             result.all_times.push_back(timer.ms());
@@ -910,9 +910,9 @@ private:
         result.name = name;
         result.category = category;
 
-        // 使用 v2 优化版本 - 仅计数
+        // 使用 v3 优化版本 - 仅计数
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::count_i32_v2(data.data(), data.size(),
+            thunderduck::filter::count_i32_v3(data.data(), data.size(),
                 thunderduck::filter::CompareOp::EQ, value);
         }
 
@@ -921,7 +921,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::count_i32_v2(data.data(), data.size(),
+            count = thunderduck::filter::count_i32_v3(data.data(), data.size(),
                 thunderduck::filter::CompareOp::EQ, value);
             timer.stop();
             result.all_times.push_back(timer.ms());
@@ -941,9 +941,9 @@ private:
         result.name = name;
         result.category = category;
 
-        // 使用 v2 优化版本 - 范围计数
+        // 使用 v3 优化版本 - 范围计数
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::count_i32_range_v2(data.data(), data.size(), low, high);
+            thunderduck::filter::count_i32_range_v3(data.data(), data.size(), low, high);
         }
 
         Timer timer;
@@ -951,7 +951,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::count_i32_range_v2(data.data(), data.size(), low, high);
+            count = thunderduck::filter::count_i32_range_v3(data.data(), data.size(), low, high);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }

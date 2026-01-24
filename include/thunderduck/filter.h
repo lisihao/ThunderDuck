@@ -186,6 +186,49 @@ size_t filter_i32_v2(const int32_t* input, size_t count,
                       CompareOp op, int32_t value,
                       uint32_t* out_indices);
 
+// ============================================================================
+// v3.0 优化版本 - 模板特化 + 独立累加器 + vsub 优化
+// ============================================================================
+
+/**
+ * v3.0 优化版计数函数
+ *
+ * 优化特性：
+ * - 模板特化消除循环内 switch-case
+ * - 4 独立累加器消除依赖链 (ILP)
+ * - vsub 替代 vshr+vadd 减少指令
+ * - 256 元素批次处理减少归约次数
+ * - 自适应预取策略
+ *
+ * @param input 输入数组（建议 128 字节对齐）
+ * @param count 输入数量
+ * @param op 比较操作
+ * @param value 比较值
+ * @return 满足条件的元素数量
+ */
+size_t count_i32_v3(const int32_t* input, size_t count,
+                     CompareOp op, int32_t value);
+
+/**
+ * v3.0 优化版范围计数
+ */
+size_t count_i32_range_v3(const int32_t* input, size_t count,
+                           int32_t low, int32_t high);
+
+/**
+ * v3.0 优化版位图过滤
+ */
+size_t filter_to_bitmap_v3(const int32_t* input, size_t count,
+                            CompareOp op, int32_t value,
+                            uint64_t* bitmap);
+
+/**
+ * v3.0 优化版过滤
+ */
+size_t filter_i32_v3(const int32_t* input, size_t count,
+                      CompareOp op, int32_t value,
+                      uint32_t* out_indices);
+
 } // namespace filter
 } // namespace thunderduck
 
