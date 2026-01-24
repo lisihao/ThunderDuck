@@ -40,7 +40,8 @@ constexpr size_t K_MEDIUM_THRESHOLD = 1024;     // K <= 1024 视为中等 K
 constexpr size_t SIMD_BATCH = 64;               // 每批 64 个元素 (16 个向量)
 
 // 预过滤安全系数 (采样估计阈值时，取第 K * SAFETY_FACTOR 大的值)
-constexpr double SAFETY_FACTOR = 0.8;           // 保守估计，避免漏掉元素
+// 使用 > 1.0 的值让阈值更低，收集更多候选，确保不漏掉真正的 TopK
+constexpr double SAFETY_FACTOR = 3.0;           // 保守估计：收集约 3K 个候选
 
 } // anonymous namespace
 
@@ -151,10 +152,10 @@ void collect_candidates_max_simd(const int32_t* data, size_t count,
             int32x4_t d2 = vld1q_s32(data + i + j + 8);
             int32x4_t d3 = vld1q_s32(data + i + j + 12);
 
-            uint32x4_t m0 = vcgtq_s32(d0, thresh_vec);
-            uint32x4_t m1 = vcgtq_s32(d1, thresh_vec);
-            uint32x4_t m2 = vcgtq_s32(d2, thresh_vec);
-            uint32x4_t m3 = vcgtq_s32(d3, thresh_vec);
+            uint32x4_t m0 = vcgeq_s32(d0, thresh_vec);
+            uint32x4_t m1 = vcgeq_s32(d1, thresh_vec);
+            uint32x4_t m2 = vcgeq_s32(d2, thresh_vec);
+            uint32x4_t m3 = vcgeq_s32(d3, thresh_vec);
 
             uint32x4_t any01 = vorrq_u32(m0, m1);
             uint32x4_t any23 = vorrq_u32(m2, m3);
@@ -169,7 +170,7 @@ void collect_candidates_max_simd(const int32_t* data, size_t count,
         // 如果批次有候选，逐个检查并收集
         if (has_candidate) {
             for (size_t j = 0; j < SIMD_BATCH; ++j) {
-                if (data[i + j] > threshold) {
+                if (data[i + j] >= threshold) {
                     candidates.push_back({data[i + j], static_cast<uint32_t>(i + j)});
                 }
             }
@@ -205,10 +206,10 @@ void collect_candidates_min_simd(const int32_t* data, size_t count,
             int32x4_t d2 = vld1q_s32(data + i + j + 8);
             int32x4_t d3 = vld1q_s32(data + i + j + 12);
 
-            uint32x4_t m0 = vcltq_s32(d0, thresh_vec);
-            uint32x4_t m1 = vcltq_s32(d1, thresh_vec);
-            uint32x4_t m2 = vcltq_s32(d2, thresh_vec);
-            uint32x4_t m3 = vcltq_s32(d3, thresh_vec);
+            uint32x4_t m0 = vcleq_s32(d0, thresh_vec);
+            uint32x4_t m1 = vcleq_s32(d1, thresh_vec);
+            uint32x4_t m2 = vcleq_s32(d2, thresh_vec);
+            uint32x4_t m3 = vcleq_s32(d3, thresh_vec);
 
             uint32x4_t any01 = vorrq_u32(m0, m1);
             uint32x4_t any23 = vorrq_u32(m2, m3);
@@ -222,7 +223,7 @@ void collect_candidates_min_simd(const int32_t* data, size_t count,
 
         if (has_candidate) {
             for (size_t j = 0; j < SIMD_BATCH; ++j) {
-                if (data[i + j] < threshold) {
+                if (data[i + j] <= threshold) {
                     candidates.push_back({data[i + j], static_cast<uint32_t>(i + j)});
                 }
             }
@@ -271,13 +272,47 @@ void topk_sampled_prefilter_max(const int32_t* data, size_t count, size_t k,
 #else
     candidates.reserve(count / 10);
     for (size_t i = 0; i < count; ++i) {
-        if (data[i] > threshold) {
+        if (data[i] >= threshold) {
             candidates.push_back({data[i], static_cast<uint32_t>(i)});
         }
     }
 #endif
 
-    // 3. 如果候选不足 K 个，需要降低阈值重新收集
+    // 3. 检查候选数量是否合理
+    // 如果候选过多 (> 5% of total)，说明数据基数低，采样无效
+    // 回退到堆方法
+    if (candidates.size() > count / 20) {
+        // 使用堆方法处理
+        auto cmp = [](const std::pair<int32_t, uint32_t>& a,
+                      const std::pair<int32_t, uint32_t>& b) {
+            return a.first > b.first;
+        };
+
+        std::vector<std::pair<int32_t, uint32_t>> heap;
+        heap.reserve(k);
+
+        for (size_t i = 0; i < count; ++i) {
+            if (heap.size() < k) {
+                heap.push_back({data[i], static_cast<uint32_t>(i)});
+                std::push_heap(heap.begin(), heap.end(), cmp);
+            } else if (data[i] > heap.front().first) {
+                std::pop_heap(heap.begin(), heap.end(), cmp);
+                heap.back() = {data[i], static_cast<uint32_t>(i)};
+                std::push_heap(heap.begin(), heap.end(), cmp);
+            }
+        }
+
+        std::sort(heap.begin(), heap.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
+
+        for (size_t i = 0; i < k && i < heap.size(); ++i) {
+            out_values[i] = heap[i].first;
+            if (out_indices) out_indices[i] = heap[i].second;
+        }
+        return;
+    }
+
+    // 4. 如果候选不足 K 个，需要降低阈值重新收集
     if (candidates.size() < k) {
         // 降低阈值到最小值，收集所有元素
         candidates.clear();
@@ -287,14 +322,14 @@ void topk_sampled_prefilter_max(const int32_t* data, size_t count, size_t k,
         }
     }
 
-    // 4. 从候选中选择 TopK
+    // 5. 从候选中选择 TopK
     if (candidates.size() > k) {
         std::nth_element(candidates.begin(), candidates.begin() + k, candidates.end(),
             [](const auto& a, const auto& b) { return a.first > b.first; });
         candidates.resize(k);
     }
 
-    // 5. 排序输出
+    // 6. 排序输出
     std::sort(candidates.begin(), candidates.end(),
         [](const auto& a, const auto& b) { return a.first > b.first; });
 
@@ -315,11 +350,37 @@ void topk_sampled_prefilter_min(const int32_t* data, size_t count, size_t k,
 #else
     candidates.reserve(count / 10);
     for (size_t i = 0; i < count; ++i) {
-        if (data[i] < threshold) {
+        if (data[i] <= threshold) {
             candidates.push_back({data[i], static_cast<uint32_t>(i)});
         }
     }
 #endif
+
+    // 检查候选数量是否合理
+    if (candidates.size() > count / 20) {
+        // 使用堆方法处理
+        std::vector<std::pair<int32_t, uint32_t>> heap;
+        heap.reserve(k);
+
+        for (size_t i = 0; i < count; ++i) {
+            if (heap.size() < k) {
+                heap.push_back({data[i], static_cast<uint32_t>(i)});
+                std::push_heap(heap.begin(), heap.end());
+            } else if (data[i] < heap.front().first) {
+                std::pop_heap(heap.begin(), heap.end());
+                heap.back() = {data[i], static_cast<uint32_t>(i)};
+                std::push_heap(heap.begin(), heap.end());
+            }
+        }
+
+        std::sort(heap.begin(), heap.end());
+
+        for (size_t i = 0; i < k && i < heap.size(); ++i) {
+            out_values[i] = heap[i].first;
+            if (out_indices) out_indices[i] = heap[i].second;
+        }
+        return;
+    }
 
     if (candidates.size() < k) {
         candidates.clear();
@@ -455,7 +516,7 @@ void topk_simd_heap_max(const int32_t* data, size_t count, size_t k,
 
         if (vmaxvq_u32(any)) {
             for (size_t j = 0; j < 16; ++j) {
-                if (data[i + j] > threshold) {
+                if (data[i + j] >= threshold) {
                     std::pop_heap(heap.begin(), heap.end(), cmp);
                     heap.back() = {data[i + j], static_cast<uint32_t>(i + j)};
                     std::push_heap(heap.begin(), heap.end(), cmp);
@@ -524,7 +585,7 @@ void topk_simd_heap_min(const int32_t* data, size_t count, size_t k,
 
         if (vmaxvq_u32(any)) {
             for (size_t j = 0; j < 16; ++j) {
-                if (data[i + j] < threshold) {
+                if (data[i + j] <= threshold) {
                     std::pop_heap(heap.begin(), heap.end());
                     heap.back() = {data[i + j], static_cast<uint32_t>(i + j)};
                     std::push_heap(heap.begin(), heap.end());
