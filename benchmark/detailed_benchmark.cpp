@@ -755,7 +755,7 @@ private:
             tc.category = "TopK";
             tc.name = "Top-10";
             tc.sql = "SELECT o_totalprice FROM orders ORDER BY o_totalprice DESC LIMIT 10";
-            tc.thunder_op = "topk_max_i32_v2(o_totalprice, 10)";
+            tc.thunder_op = "topk_max_i32_v3(o_totalprice, 10)";
             tc.data_rows = num_orders_;
             tc.data_bytes = num_orders_ * sizeof(int32_t);
 
@@ -776,13 +776,13 @@ private:
             std::vector<int32_t> values(10);
             std::vector<uint32_t> indices(10);
             for (int i = 0; i < warmup; ++i) {
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 10, values.data(), indices.data());
             }
             total = 0;
             for (int i = 0; i < iterations; ++i) {
                 timer.start();
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 10, values.data(), indices.data());
                 timer.stop();
                 total += timer.ms();
@@ -801,7 +801,7 @@ private:
             tc.category = "TopK";
             tc.name = "Top-100";
             tc.sql = "SELECT o_totalprice FROM orders ORDER BY o_totalprice DESC LIMIT 100";
-            tc.thunder_op = "topk_max_i32_v2(o_totalprice, 100)";
+            tc.thunder_op = "topk_max_i32_v3(o_totalprice, 100)";
             tc.data_rows = num_orders_;
             tc.data_bytes = num_orders_ * sizeof(int32_t);
 
@@ -822,13 +822,13 @@ private:
             std::vector<int32_t> values(100);
             std::vector<uint32_t> indices(100);
             for (int i = 0; i < warmup; ++i) {
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 100, values.data(), indices.data());
             }
             total = 0;
             for (int i = 0; i < iterations; ++i) {
                 timer.start();
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 100, values.data(), indices.data());
                 timer.stop();
                 total += timer.ms();
@@ -847,7 +847,7 @@ private:
             tc.category = "TopK";
             tc.name = "Top-1000";
             tc.sql = "SELECT o_totalprice FROM orders ORDER BY o_totalprice DESC LIMIT 1000";
-            tc.thunder_op = "topk_max_i32_v2(o_totalprice, 1000)";
+            tc.thunder_op = "topk_max_i32_v3(o_totalprice, 1000)";
             tc.data_rows = num_orders_;
             tc.data_bytes = num_orders_ * sizeof(int32_t);
 
@@ -868,13 +868,13 @@ private:
             std::vector<int32_t> values(1000);
             std::vector<uint32_t> indices(1000);
             for (int i = 0; i < warmup; ++i) {
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 1000, values.data(), indices.data());
             }
             total = 0;
             for (int i = 0; i < iterations; ++i) {
                 timer.start();
-                thunderduck::sort::topk_max_i32_v2(order_price_.data(),
+                thunderduck::sort::topk_max_i32_v3(order_price_.data(),
                     order_price_.size(), 1000, values.data(), indices.data());
                 timer.stop();
                 total += timer.ms();

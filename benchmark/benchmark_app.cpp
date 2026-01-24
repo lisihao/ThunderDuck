@@ -1119,14 +1119,14 @@ private:
 
         // 使用 v2 优化版本
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::sort::topk_max_i32_v2(data.data(), data.size(), k, values.data(), indices.data());
+            thunderduck::sort::topk_max_i32_v3(data.data(), data.size(), k, values.data(), indices.data());
         }
 
         Timer timer;
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            thunderduck::sort::topk_max_i32_v2(data.data(), data.size(), k, values.data(), indices.data());
+            thunderduck::sort::topk_max_i32_v3(data.data(), data.size(), k, values.data(), indices.data());
             timer.stop();
             result.all_times.push_back(timer.ms());
         }

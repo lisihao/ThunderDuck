@@ -189,6 +189,34 @@ void topk_max_i32_v2(const int32_t* data, size_t count, size_t k,
 void topk_min_i32_v2(const int32_t* data, size_t count, size_t k,
                      int32_t* out_values, uint32_t* out_indices = nullptr);
 
+// ============================================================================
+// v3.0 优化版本 - 自适应 TopK
+// ============================================================================
+
+/**
+ * v3.0 优化版 Top-K Max
+ *
+ * 自适应策略选择：
+ * - K ≤ 64: 纯堆方法 (L1 常驻)
+ * - 64 < K ≤ 1024: SIMD 加速堆
+ * - 1024 < K ≤ 4096: 分块处理
+ * - K > 4096: 无复制 nth_element
+ *
+ * @param data 输入数组
+ * @param count 元素数量
+ * @param k 要获取的元素数量
+ * @param out_values 输出值数组
+ * @param out_indices 输出索引数组（可选）
+ */
+void topk_max_i32_v3(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
+/**
+ * v3.0 优化版 Top-K Min
+ */
+void topk_min_i32_v3(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 
