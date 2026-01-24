@@ -160,6 +160,35 @@ void merge_sorted_i32(const int32_t* a, size_t a_count,
 void merge_k_sorted_i32(const int32_t** arrays, const size_t* counts, size_t k,
                         int32_t* out, SortOrder order = SortOrder::ASC);
 
+// ============================================================================
+// v2.0 优化版本 - Radix Sort
+// ============================================================================
+
+/**
+ * Radix Sort - O(n) 整数排序
+ */
+void radix_sort_i32(int32_t* data, size_t count, SortOrder order = SortOrder::ASC);
+void radix_sort_u32(uint32_t* data, size_t count, SortOrder order = SortOrder::ASC);
+
+/**
+ * 优化版 Radix Sort - 11-11-10 位分组（3趟）
+ */
+void radix_sort_i32_v2(int32_t* data, size_t count, SortOrder order = SortOrder::ASC);
+
+/**
+ * 优化的主排序函数 - 自动选择最佳算法
+ */
+void sort_i32_v2(int32_t* data, size_t count, SortOrder order = SortOrder::ASC);
+
+/**
+ * 优化版 Top-K - 堆/快速选择混合
+ */
+void topk_max_i32_v2(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
+void topk_min_i32_v2(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 

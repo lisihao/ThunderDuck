@@ -183,6 +183,26 @@ size_t simd_find_matches_i32(const int32_t* candidates, size_t candidate_count,
 size_t simd_find_matches_i64(const int64_t* candidates, size_t candidate_count,
                              int64_t probe_key, uint32_t* out_matches);
 
+// ============================================================================
+// v2.0 优化版本 - Robin Hood Hash Join
+// ============================================================================
+
+/**
+ * 优化版 Hash Join - Robin Hood 哈希表 + 批量预取
+ */
+size_t hash_join_i32_v2(const int32_t* build_keys, size_t build_count,
+                         const int32_t* probe_keys, size_t probe_count,
+                         JoinType join_type,
+                         JoinResult* result);
+
+/**
+ * 分区 Hash Join - 用于超大表
+ */
+size_t partitioned_hash_join_i32(const int32_t* build_keys, size_t build_count,
+                                  const int32_t* probe_keys, size_t probe_count,
+                                  JoinType join_type,
+                                  JoinResult* result);
+
 } // namespace join
 } // namespace thunderduck
 

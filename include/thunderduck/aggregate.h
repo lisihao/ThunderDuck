@@ -49,8 +49,47 @@ double avg_f64(const double* input, size_t count);
 // --- COUNT (non-null) ---
 // 假设 null 用特定值表示（如 INT32_MIN）
 
-size_t count_nonnull_i32(const int32_t* input, size_t count, 
+size_t count_nonnull_i32(const int32_t* input, size_t count,
                          int32_t null_value = std::numeric_limits<int32_t>::min());
+
+// ============================================================================
+// v2.0 优化版本 - 合并函数 + 预取
+// ============================================================================
+
+/**
+ * 合并的 MIN/MAX 函数 - 单次遍历同时计算
+ */
+void minmax_i32(const int32_t* input, size_t count,
+                int32_t* out_min, int32_t* out_max);
+
+void minmax_i64(const int64_t* input, size_t count,
+                int64_t* out_min, int64_t* out_max);
+
+void minmax_f32(const float* input, size_t count,
+                float* out_min, float* out_max);
+
+/**
+ * 优化版 SUM - 16 元素/迭代 + 预取
+ */
+int64_t sum_i32_v2(const int32_t* input, size_t count);
+double sum_f32_v2(const float* input, size_t count);
+
+/**
+ * Kahan 求和 - 高精度版本
+ */
+double avg_f64_kahan(const double* input, size_t count);
+
+/**
+ * 一次遍历计算所有统计量
+ */
+struct AggregateStats {
+    int64_t sum;
+    int64_t count;
+    int32_t min_val;
+    int32_t max_val;
+};
+
+AggregateStats aggregate_all_i32(const int32_t* input, size_t count);
 
 // ============================================================================
 // 带选择向量的聚合（用于过滤后的数据）

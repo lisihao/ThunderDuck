@@ -877,12 +877,11 @@ private:
         result.name = name;
         result.category = category;
 
-        std::vector<uint32_t> indices(data.size());
-
+        // 使用 v2 优化版本 - 仅计数 (与 DuckDB COUNT(*) 对比)
         // 预热
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::filter_i32(data.data(), data.size(),
-                thunderduck::filter::CompareOp::GT, value, indices.data());
+            thunderduck::filter::count_i32_v2(data.data(), data.size(),
+                thunderduck::filter::CompareOp::GT, value);
         }
 
         // 计时运行
@@ -891,8 +890,8 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::filter_i32(data.data(), data.size(),
-                thunderduck::filter::CompareOp::GT, value, indices.data());
+            count = thunderduck::filter::count_i32_v2(data.data(), data.size(),
+                thunderduck::filter::CompareOp::GT, value);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -911,11 +910,10 @@ private:
         result.name = name;
         result.category = category;
 
-        std::vector<uint32_t> indices(data.size());
-
+        // 使用 v2 优化版本 - 仅计数
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::filter_i32(data.data(), data.size(),
-                thunderduck::filter::CompareOp::EQ, value, indices.data());
+            thunderduck::filter::count_i32_v2(data.data(), data.size(),
+                thunderduck::filter::CompareOp::EQ, value);
         }
 
         Timer timer;
@@ -923,8 +921,8 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::filter_i32(data.data(), data.size(),
-                thunderduck::filter::CompareOp::EQ, value, indices.data());
+            count = thunderduck::filter::count_i32_v2(data.data(), data.size(),
+                thunderduck::filter::CompareOp::EQ, value);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -943,10 +941,9 @@ private:
         result.name = name;
         result.category = category;
 
-        std::vector<uint32_t> indices(data.size());
-
+        // 使用 v2 优化版本 - 范围计数
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::filter::filter_i32_range(data.data(), data.size(), low, high, indices.data());
+            thunderduck::filter::count_i32_range_v2(data.data(), data.size(), low, high);
         }
 
         Timer timer;
@@ -954,7 +951,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            count = thunderduck::filter::filter_i32_range(data.data(), data.size(), low, high, indices.data());
+            count = thunderduck::filter::count_i32_range_v2(data.data(), data.size(), low, high);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -973,8 +970,9 @@ private:
         result.name = name;
         result.category = category;
 
+        // 使用 v2 优化版本
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::aggregate::sum_i32(data.data(), data.size());
+            thunderduck::aggregate::sum_i32_v2(data.data(), data.size());
         }
 
         Timer timer;
@@ -982,7 +980,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            sum = thunderduck::aggregate::sum_i32(data.data(), data.size());
+            sum = thunderduck::aggregate::sum_i32_v2(data.data(), data.size());
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -1001,18 +999,18 @@ private:
         result.name = name;
         result.category = category;
 
+        int32_t min_val = 0, max_val = 0;
+
+        // 使用 v2 合并的 minmax 函数 - 单次遍历
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::aggregate::min_i32(data.data(), data.size());
-            thunderduck::aggregate::max_i32(data.data(), data.size());
+            thunderduck::aggregate::minmax_i32(data.data(), data.size(), &min_val, &max_val);
         }
 
         Timer timer;
-        volatile int32_t min_val = 0, max_val = 0;
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            min_val = thunderduck::aggregate::min_i32(data.data(), data.size());
-            max_val = thunderduck::aggregate::max_i32(data.data(), data.size());
+            thunderduck::aggregate::minmax_i32(data.data(), data.size(), &min_val, &max_val);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -1031,8 +1029,9 @@ private:
         result.name = name;
         result.category = category;
 
+        // 使用 v2 优化版本
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::aggregate::sum_i32(data.data(), data.size());
+            thunderduck::aggregate::sum_i32_v2(data.data(), data.size());
         }
 
         Timer timer;
@@ -1040,7 +1039,7 @@ private:
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            int64_t sum = thunderduck::aggregate::sum_i32(data.data(), data.size());
+            int64_t sum = thunderduck::aggregate::sum_i32_v2(data.data(), data.size());
             avg = static_cast<double>(sum) / data.size();
             timer.stop();
             result.all_times.push_back(timer.ms());
@@ -1085,9 +1084,10 @@ private:
 
         std::vector<int32_t> copy = data;
 
+        // 使用 v2 优化版本 (Radix Sort)
         for (int i = 0; i < config_.warmup_iterations; ++i) {
             copy = data;
-            thunderduck::sort::sort_i32(copy.data(), copy.size(), order);
+            thunderduck::sort::sort_i32_v2(copy.data(), copy.size(), order);
         }
 
         Timer timer;
@@ -1095,7 +1095,7 @@ private:
         for (int i = 0; i < config_.num_iterations; ++i) {
             copy = data;
             timer.start();
-            thunderduck::sort::sort_i32(copy.data(), copy.size(), order);
+            thunderduck::sort::sort_i32_v2(copy.data(), copy.size(), order);
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -1117,15 +1117,16 @@ private:
         std::vector<int32_t> values(k);
         std::vector<uint32_t> indices(k);
 
+        // 使用 v2 优化版本
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::sort::topk_max_i32(data.data(), data.size(), k, values.data(), indices.data());
+            thunderduck::sort::topk_max_i32_v2(data.data(), data.size(), k, values.data(), indices.data());
         }
 
         Timer timer;
 
         for (int i = 0; i < config_.num_iterations; ++i) {
             timer.start();
-            thunderduck::sort::topk_max_i32(data.data(), data.size(), k, values.data(), indices.data());
+            thunderduck::sort::topk_max_i32_v2(data.data(), data.size(), k, values.data(), indices.data());
             timer.stop();
             result.all_times.push_back(timer.ms());
         }
@@ -1148,9 +1149,10 @@ private:
         thunderduck::join::JoinResult* join_result =
             thunderduck::join::create_join_result(probe_keys.size());
 
+        // 使用 v2 优化版本 (Robin Hood Hash Join)
         for (int i = 0; i < config_.warmup_iterations; ++i) {
             join_result->count = 0;
-            thunderduck::join::hash_join_i32(
+            thunderduck::join::hash_join_i32_v2(
                 build_keys.data(), build_keys.size(),
                 probe_keys.data(), probe_keys.size(),
                 thunderduck::join::JoinType::INNER, join_result);
@@ -1162,7 +1164,7 @@ private:
         for (int i = 0; i < config_.num_iterations; ++i) {
             join_result->count = 0;
             timer.start();
-            match_count = thunderduck::join::hash_join_i32(
+            match_count = thunderduck::join::hash_join_i32_v2(
                 build_keys.data(), build_keys.size(),
                 probe_keys.data(), probe_keys.size(),
                 thunderduck::join::JoinType::INNER, join_result);

@@ -150,6 +150,42 @@ size_t count_i32(const int32_t* input, size_t count,
 size_t count_f32(const float* input, size_t count,
                  CompareOp op, float value);
 
+// ============================================================================
+// v2.0 优化版本
+// ============================================================================
+
+/**
+ * 优化版计数函数 - 16 元素/迭代 + 预取
+ */
+size_t count_i32_v2(const int32_t* input, size_t count,
+                     CompareOp op, int32_t value);
+
+/**
+ * 优化版范围计数
+ */
+size_t count_i32_range_v2(const int32_t* input, size_t count,
+                           int32_t low, int32_t high);
+
+/**
+ * 位图过滤 - 生成位图
+ */
+size_t filter_to_bitmap_i32(const int32_t* input, size_t count,
+                             CompareOp op, int32_t value,
+                             uint64_t* bitmap);
+
+/**
+ * 位图转索引
+ */
+size_t bitmap_to_indices(const uint64_t* bitmap, size_t bit_count,
+                         uint32_t* out_indices);
+
+/**
+ * 优化版过滤 - 使用位图中间表示
+ */
+size_t filter_i32_v2(const int32_t* input, size_t count,
+                      CompareOp op, int32_t value,
+                      uint32_t* out_indices);
+
 } // namespace filter
 } // namespace thunderduck
 
