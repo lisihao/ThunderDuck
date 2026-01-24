@@ -631,7 +631,7 @@ private:
         result.data_rows = data.size();
         result.data_bytes = data.size() * sizeof(int32_t);
         result.sql_query = "SELECT val FROM " + table + " ORDER BY val DESC LIMIT " + std::to_string(k);
-        result.thunder_api = "topk_max_i32_v3";
+        result.thunder_api = "topk_max_i32_v4";
         result.result_rows = k;
 
         PrecisionTimer duck_timer, thunder_timer;
@@ -644,16 +644,16 @@ private:
             duck_timer.stop();
         }
 
-        // ThunderDuck - 使用 v3 优化版本
+        // ThunderDuck - 使用 v4 优化版本 (采样预过滤 + SIMD 批量跳过)
         std::vector<int32_t> topk_values(k);
         std::vector<uint32_t> topk_indices(k);
         for (int i = 0; i < config_.warmup_iterations; ++i) {
-            thunderduck::sort::topk_max_i32_v3(data.data(), data.size(), k,
+            thunderduck::sort::topk_max_i32_v4(data.data(), data.size(), k,
                                                 topk_values.data(), topk_indices.data());
         }
         for (int i = 0; i < config_.test_iterations; ++i) {
             thunder_timer.start();
-            thunderduck::sort::topk_max_i32_v3(data.data(), data.size(), k,
+            thunderduck::sort::topk_max_i32_v4(data.data(), data.size(), k,
                                                 topk_values.data(), topk_indices.data());
             thunder_timer.stop();
         }

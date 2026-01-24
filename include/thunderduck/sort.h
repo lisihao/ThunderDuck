@@ -217,6 +217,41 @@ void topk_max_i32_v3(const int32_t* data, size_t count, size_t k,
 void topk_min_i32_v3(const int32_t* data, size_t count, size_t k,
                      int32_t* out_values, uint32_t* out_indices = nullptr);
 
+// ============================================================================
+// v4.0 优化版本 - 采样预过滤 (针对大 N 小 K 场景)
+// ============================================================================
+
+/**
+ * v4.0 优化版 Top-K Max
+ *
+ * 核心优化: 采样预过滤 + SIMD 批量跳过
+ *
+ * 针对 T4 场景 (10M 行, K=10) 的专项优化:
+ * - 采样估计第 K 大值作为阈值
+ * - SIMD 批量预过滤，跳过 ~90% 的元素
+ * - 只对候选元素进行最终选择
+ *
+ * 策略选择:
+ * - N >= 1M 且 K <= 64: 采样预过滤 (专为大数据小K优化)
+ * - K <= 64: 纯堆方法 (L1 常驻)
+ * - 64 < K <= 1024: SIMD 加速堆
+ * - K > 1024: 无复制 nth_element
+ *
+ * @param data 输入数组
+ * @param count 元素数量
+ * @param k 要获取的元素数量
+ * @param out_values 输出值数组
+ * @param out_indices 输出索引数组（可选）
+ */
+void topk_max_i32_v4(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
+/**
+ * v4.0 优化版 Top-K Min
+ */
+void topk_min_i32_v4(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 
