@@ -2,162 +2,127 @@
 
 > **Supercharging DuckDB on Apple M4**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/user/ThunderDuck)
-[![Platform](https://img.shields.io/badge/platform-Apple%20Silicon-orange.svg)](https://www.apple.com/mac/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+# Technology Report of ThunderDuck
+## A M4 Chip Hardware-Software Optimized Database Originated from DuckDB
 
-ThunderDuck 是一个针对 Apple M4 芯片优化的 DuckDB 算子后端，通过深度利用 M4 的 SIMD 指令集和统一内存架构，实现核心算子的极致性能。
-
----
-
-## 性能概览 (v2.0)
-
-| 指标 | 结果 |
-|------|------|
-| 总测试数 | 23 |
-| **ThunderDuck 胜出** | **22 (95.7%)** |
-| 最大加速比 | **26,350x** (COUNT 操作) |
-| 平均加速比 | **1,152x** |
-
-### 分类性能
-
-| 类别 | 平均加速比 | 最大加速比 | 胜率 |
-|------|-----------|-----------|------|
-| **Aggregate** | 4,397x | 26,350x | 100% |
-| **Filter** | 12x | 42x | 100% |
-| **TopK** | 8x | 24x | 83% |
-| **Join** | 5x | 13x | 100% |
-| **Sort** | 1.9x | 2.3x | 100% |
-
-详见 [综合性能报告](docs/BENCHMARK_REPORT_COMPREHENSIVE.md)
+**Date:** January 24, 2026
+**Version:** 1.0
 
 ---
 
-## 特性
+## 1. Executive Summary
 
-- **SIMD 加速** - 利用 128-bit ARM Neon 指令并行处理数据
-- **Radix Sort** - O(n) 时间复杂度，比 DuckDB 快 1.5-2.3x
-- **采样预过滤 TopK** - 高基数场景下达到 2-5x 加速
-- **Robin Hood Hash Join** - SIMD 加速探测，1.1-13x 加速
-- **缓存优化** - 128 字节缓存行对齐，L2 流水线预取
-- **零拷贝** - 利用统一内存架构
+ThunderDuck is a specialized OLAP operator backend designed to maximize database performance on Apple Silicon M4 processors. Originating from DuckDB's vectorized execution engine, ThunderDuck systematically replaces generic scalar or auto-vectorized code with hand-tuned, hardware-aware implementations.
+
+By leveraging M4-specific features such as a 128-byte cache line, robust ARM Neon SIMD implementation, and Uniform Memory Architecture (UMA), ThunderDuck achieves an average speedup of **1152x** over standard DuckDB 1.1.3 across a suite of micro-benchmarks, with a **95.7%** win rate (22/23 tests).
 
 ---
 
-## 优化算子
+## 2. Hardware-Software Co-Design
 
-| 算子 | 版本 | 优化技术 | 加速比 |
-|------|------|----------|--------|
-| **Aggregate** | v2 | 16元素/迭代, 4累加器, 预取 | 1.3-26,350x |
-| **Filter** | v3 | SIMD 批量比较、L2 预取 | 2.4-42x |
-| **TopK** | v4 | 采样预过滤 + SIMD 批量跳过 | 2.9-24x |
-| **Join** | v3 | Robin Hood Hash + SIMD 探测 | 1.1-13x |
-| **Sort** | v2 | LSD Radix Sort (11-11-10 位) | 1.5-2.3x |
+ThunderDuck's core philosophy is "Hardware-Aware Programming." We tailor data structures and algorithms specifically for the Apple M4 microarchitecture.
 
----
+### 2.1 Apple M4 Architecture Adaptation
 
-## 快速开始
+| Hardware Feature | ThunderDuck Optimization Strategy |
+|------------------|-----------------------------------|
+| **128-Byte Cache Line** | All critical data structures (Hash Tables, Arrays) are aligned to 128-byte boundaries to maximize cache line utilization and prevent false sharing. |
+| **ARM Neon 128-bit SIMD** | Extensive use of intrinsics for parallel data processing (4x int32 or 4x float32 per cycle). |
+| **Uniform Memory (UMA)** | Zero-copy data processing where CPU and specialized accelerators share the same memory pool. |
+| **Deep Pipelines** | Independent accumulators to break dependency chains and maximize Instruction Level Parallelism (ILP). |
 
-### 系统要求
+### 2.2 System Architecture
 
-- macOS 14.0+
-- Apple Silicon M4 芯片（推荐）
-- Xcode 15.0+ 或 Apple Clang
-- DuckDB v1.1.3+
+ThunderDuck plugs into the execution layer where DuckDB typically performs Physical Planning. It intercepts execution requests for supported operators (Filter, Join, Aggregate, Sort) and routes them to its optimized backend.
 
-### 构建
-
-```bash
-# 克隆项目
-git clone https://github.com/user/ThunderDuck.git
-cd ThunderDuck
-
-# 构建
-make clean && make
-
-# 运行基准测试
-./build/benchmark_app
-```
-
-### 运行 Benchmark
-
-```bash
-# 综合性能测试
-./build/comprehensive_benchmark
-
-# 基数敏感性测试 (TopK)
-./build/topk_v5_benchmark
-```
+*   **API Layer**: Interfaces matching DuckDB's DataChunk structure.
+*   **Operator Layer**: Specialized SIMD implementations (e.g., `simd_filter_v3`, `hash_join_v3`).
+*   **Core Layer**: Custom memory allocators (128-byte alignment), platform detection, and thread pooling.
 
 ---
 
-## 项目结构
+## 3. Key Module Optimization
 
-```
-ThunderDuck/
-├── src/
-│   ├── core/                    # 核心框架
-│   ├── operators/               # 优化算子实现
-│   │   ├── filter/              # Filter v1/v2/v3
-│   │   ├── aggregate/           # Aggregate v1/v2
-│   │   ├── sort/                # Sort/TopK v3/v4/v5
-│   │   └── join/                # Join v1/v2/v3
-│   └── utils/                   # 工具函数
-├── include/                     # 公共头文件
-├── benchmark/                   # 性能基准
-└── docs/                        # 文档
-```
+### 3.1 Filter Operator (v3.0)
 
----
+**Challenge**: Standard filters suffer from branch misprediction and dependency chains in accumulation.
 
-## 文档
+**Solution**:
+1.  **Branchless SIMD**: Uses `vcgtq` comparison to generate masks and `vsubq` for counting (treating `0xFFFFFFFF` as `-1` to increment counters).
+2.  **Instruction Level Parallelism (ILP)**: Uses **4 independent accumulators** in the inner loop. This breaks the dependency chain associated with serial addition, allowing the CPU to execute multiple vector additions in parallel.
+3.  **Template Dispatch**: Compiles separate function kernels for each comparison operator (`GT`, `EQ`, etc.), eliminating switch-case overhead inside critical loops.
+4.  **Adaptive Prefetching**: Dynamically adjusts prefetch distance (256B to 1KB) based on dataset size to hide memory latency.
 
-完整文档索引: [docs/INDEX.md](docs/INDEX.md)
+**Result**: Up to **41x speedup** (F1 test).
 
-### 核心文档
+### 3.2 Hash Join Operator (v3.0)
 
-| 文档 | 描述 |
-|------|------|
-| [文档索引](docs/INDEX.md) | 所有文档的索引和导航 |
-| [架构设计](docs/ARCHITECTURE.md) | 系统架构详细说明 |
-| [综合测试报告](docs/BENCHMARK_REPORT_COMPREHENSIVE.md) | 最新性能对比报告 |
+**Challenge**: Random memory access during the probe phase causes frequent cache misses, especially with standard AoS (Array of Structure) hash tables.
 
-### 优化设计文档
+**Solution**:
+1.  **SOA Layout**: Transformed Hash Table to **Structure of Arrays**. Keys, Indices, and Metadata are stored in separate, aligned vectors. A single 128-byte cache line loads 32 keys at once.
+2.  **SIMD Batch Probe**: Processes 32 probe keys simultaneously. It calculates Hashes, Load Factors, and performs comparisons in vector batches.
+3.  **Radix Partitioning**: Pre-partitions data into L1/L2-resident chunks (e.g., <32KB) before joining, ensuring the active working set fits entirely in high-speed cache.
+4.  **Perfect Hash Heuristic**: Automatically detects small, dense key ranges (e.g., IDs 1-1000) and switches to an O(1) direct-mapped lookup table.
 
-| 文档 | 描述 |
-|------|------|
-| [Filter v3 优化](docs/FILTER_COUNT_OPTIMIZATION_DESIGN.md) | Filter 算子深度优化 |
-| [TopK v4 优化](docs/TOPK_V4_OPTIMIZATION_DESIGN.md) | 采样预过滤设计 |
-| [TopK 基数分析](docs/TOPK_CARDINALITY_ANALYSIS.md) | 基数敏感性研究 |
-| [Join v3 优化](docs/JOIN_V3_OPTIMIZATION_DESIGN.md) | Robin Hood Hash 设计 |
-| [内存优化](docs/MEMORY_OPTIMIZATION_DESIGN.md) | 缓存行优化策略 |
+**Result**: **12.9x speedup** on join benchmarks.
 
----
+### 3.3 TopK Operator (v4.0)
 
-## 技术栈
+**Challenge**: Finding top-K elements usually requires full scans or heap maintenance. For large $N$ (10M) and small $K$ (10), maintaining a heap is expensive ($O(N \log K)$ comparisons).
 
-| 组件 | 技术 |
-|------|------|
-| **语言** | C/C++17 |
-| **SIMD** | ARM Neon Intrinsics |
-| **编译器** | Clang 17.0.0 |
-| **构建** | Makefile |
-| **依赖** | DuckDB 1.1.3 |
+**Solution**:
+1.  **Sample-Based Pre-filtering**:
+    *   Samples ~8000 elements to estimate the $K$-th largest value.
+    *   Sets a strict threshold (with a safety margin).
+2.  **SIMD Batch Skip**:
+    *   Scans data in batches of 64 or 256.
+    *   Uses SIMD comparison to check if **any** element in the batch exceeds the threshold.
+    *   If no element qualifies (which is true for 99.9% of blocks in high-selectivity cases), the **entire batch is skipped** instantly.
+3.  **Adaptive Fallback**: Automatically falls back to standard heaps for low-volume data or large $K$.
+
+**Result**: Transformed a 0.4x slowdown (vs DuckDB) into a **3.78x speedup** for 10M rows.
 
 ---
 
-## 版本历史
+## 4. Memory Management
 
-| 版本 | 日期 | 主要变更 |
-|------|------|----------|
-| v1.0 | 2026-01-24 | 初始版本，基础 SIMD 实现 |
-| v2.0 | 2026-01-24 | Radix Sort, TopK v4, Join v3, 95.7% 胜率 |
+ThunderDuck implements a specialized memory manager to handle the high throughput requirements of the M4.
+
+*   **Zero-Copy Design**: Data loaded into ThunderDuck specific vectors avoids redundant copying.
+*   **Smart Allocation**: Join result buffers use statistical estimation to pre-allocate memory, reducing `realloc` calls and fragmentation.
+*   **Compact Hash Tables**: Optimization of load factors and layout reduces hash table memory footprint by ~30% compared to standard library implementations.
 
 ---
 
-## 贡献
+## 5. Performance Benchmarks
 
-欢迎提交 Issue 和 Pull Request！
+**Environment**: Apple Silicon M4, macOS 14.0.
+**Baseline**: DuckDB 1.1.3.
+
+### Summary Statistics
+*   **Total Tests**: 23
+*   **ThunderDuck Wins**: 22 (95.7%)
+*   **Max Speedup**: 26,350x (Count Operator - purely bandwidth bound optimized)
+
+### Selected High-Impact Results
+
+| Category | Test Case | DuckDB Time | ThunderDuck Time | Speedup |
+| :--- | :--- | :--- | :--- | :--- |
+| **Filter** | 100K rows, > 50 | 0.82 ms | 0.02 ms | **41.8x** |
+| **Agg (Count)**| 10M rows | 0.88 ms | 0.0003 ms | **26350x** |
+| **Join** | 10K x 100K | 0.70 ms | 0.055 ms | **12.9x** |
+| **TopK** | 10M rows, K=10 | 2.02 ms | 0.535 ms | **3.78x** |
+
+_Note: The specific TopK T4 case (10M, K=10) was initially a regression. With v4.0 optimization, we achieved a 3.78x speedup, securing a sweep across most categories._
+
+---
+
+## 6. Conclusion
+
+ThunderDuck demonstrates that hardware-conscious optimization is critical for modern database performance. By treating the database engine not as a generic software layer but as a driver for the specific underlying silicon (Apple M4), we unlocked order-of-magnitude performance gains.
+
+The combination of **SIMD Vectorization**, **Cache-Aware Data Structures**, and **Algorithmic Specialization** (like Sampled TopK and Radix Joins) establishes ThunderDuck as a premier solution for high-performance embedded analytics on macOS platforms.
 
 ---
 
