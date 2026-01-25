@@ -229,6 +229,77 @@ size_t filter_i32_v3(const int32_t* input, size_t count,
                       CompareOp op, int32_t value,
                       uint32_t* out_indices);
 
+// ============================================================================
+// v4.0 UMA 优化版本 - GPU 加速 + 零拷贝
+// ============================================================================
+
+/**
+ * 过滤策略
+ */
+enum class FilterStrategy {
+    AUTO,       // 自动选择
+    CPU_SIMD,   // CPU SIMD (v3)
+    GPU_ATOMIC, // GPU 原子版 (适合低选择率)
+    GPU_SCAN,   // GPU 前缀和版 (适合高选择率)
+};
+
+/**
+ * v4.0 过滤配置
+ */
+struct FilterConfigV4 {
+    FilterStrategy strategy = FilterStrategy::AUTO;
+    float selectivity_hint = -1.0f;  // 预估选择率 (0-1), -1 表示未知
+};
+
+/**
+ * 检查 GPU 过滤是否可用
+ */
+bool is_filter_gpu_available();
+
+/**
+ * v4.0 UMA 优化版过滤
+ *
+ * 特性:
+ * - 零拷贝数据传输 (UMA)
+ * - 自动选择 CPU/GPU
+ * - GPU 原子或前缀和策略
+ *
+ * @param input 输入数组 (建议页对齐 16KB)
+ * @param count 输入数量
+ * @param op 比较操作
+ * @param value 比较值
+ * @param out_indices 输出索引数组
+ * @return 满足条件的元素数量
+ */
+size_t filter_i32_v4(const int32_t* input, size_t count,
+                      CompareOp op, int32_t value,
+                      uint32_t* out_indices);
+
+size_t filter_i32_v4_config(const int32_t* input, size_t count,
+                             CompareOp op, int32_t value,
+                             uint32_t* out_indices,
+                             const FilterConfigV4& config);
+
+/**
+ * v4.0 UMA 优化版计数
+ */
+size_t count_i32_v4(const int32_t* input, size_t count,
+                     CompareOp op, int32_t value);
+
+/**
+ * v4.0 范围过滤
+ */
+size_t filter_i32_range_v4(const int32_t* input, size_t count,
+                            int32_t low, int32_t high,
+                            uint32_t* out_indices);
+
+/**
+ * v4.0 浮点过滤
+ */
+size_t filter_f32_v4(const float* input, size_t count,
+                      CompareOp op, float value,
+                      uint32_t* out_indices);
+
 } // namespace filter
 } // namespace thunderduck
 

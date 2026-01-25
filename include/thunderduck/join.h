@@ -250,6 +250,177 @@ size_t hash_join_i32_v3_config(const int32_t* build_keys, size_t build_count,
                                 JoinResult* result,
                                 const JoinConfig& config);
 
+// ============================================================================
+// v4.0 优化版本 - 多策略自适应 Hash Join
+// ============================================================================
+
+/**
+ * v4.0 策略选择
+ */
+enum class JoinStrategy {
+    AUTO,           // 自动选择最优策略
+    RADIX256,       // 256 分区 (8-bit, L1 友好)
+    BLOOMFILTER,    // CPU Bloom 预过滤
+    NPU,            // NPU (BNNS) 加速 Bloom
+    GPU,            // Metal GPU 并行
+    V3_FALLBACK     // 回退到 v3
+};
+
+/**
+ * v4.0 配置选项
+ */
+struct JoinConfigV4 {
+    // 策略选择
+    JoinStrategy strategy = JoinStrategy::AUTO;
+
+    // 线程控制
+    size_t num_threads = 4;           // 并行线程数
+
+    // RADIX256 参数
+    int radix_bits = 8;               // 256 分区 (8 bits)
+
+    // Bloom Filter 参数
+    double bloom_fpr = 0.01;          // 目标假阳性率 (1%)
+    size_t bloom_num_hashes = 7;      // 哈希函数数量
+
+    // NPU/GPU 控制
+    bool fallback_to_cpu = true;      // NPU/GPU 不可用时回退到 CPU
+    size_t gpu_min_probe_count = 1000000;  // GPU 策略最小 probe 数量
+    size_t npu_min_build_count = 500000;   // NPU 策略最小 build 数量
+
+    // 预取优化
+    bool enable_prefetch = true;
+};
+
+/**
+ * v4.0 策略基类 (内部使用)
+ */
+class JoinStrategyBase {
+public:
+    virtual ~JoinStrategyBase() = default;
+
+    virtual size_t execute(
+        const int32_t* build_keys, size_t build_count,
+        const int32_t* probe_keys, size_t probe_count,
+        JoinType join_type, JoinResult* result) = 0;
+
+    virtual const char* name() const = 0;
+};
+
+/**
+ * v4.0 优化版 Hash Join
+ *
+ * 优化特性:
+ * - 多策略自适应选择
+ * - RADIX256: 256 分区 (8-bit) L1 缓存优化
+ * - BloomFilter: CPU Bloom 预过滤减少探测
+ * - NPU: BNNS 加速 Bloom 计算
+ * - GPU: Metal 并行探测
+ *
+ * 策略回退链: GPU → NPU → BLOOMFILTER → RADIX256 → V3
+ *
+ * @param build_keys 构建侧键数组
+ * @param build_count 构建侧数量
+ * @param probe_keys 探测侧键数组
+ * @param probe_count 探测侧数量
+ * @param join_type 连接类型
+ * @param result 输出结果
+ * @return 匹配数量
+ */
+size_t hash_join_i32_v4(const int32_t* build_keys, size_t build_count,
+                         const int32_t* probe_keys, size_t probe_count,
+                         JoinType join_type,
+                         JoinResult* result);
+
+/**
+ * v4.0 带配置版本
+ */
+size_t hash_join_i32_v4_config(const int32_t* build_keys, size_t build_count,
+                                const int32_t* probe_keys, size_t probe_count,
+                                JoinType join_type,
+                                JoinResult* result,
+                                const JoinConfigV4& config);
+
+/**
+ * 获取当前策略名称 (用于调试/日志)
+ */
+const char* get_selected_strategy_name(size_t build_count, size_t probe_count,
+                                        const JoinConfigV4& config);
+
+/**
+ * 检查策略是否可用
+ */
+bool is_strategy_available(JoinStrategy strategy);
+
+// ============================================================================
+// v5.0 GPU 优化版本 (内部使用)
+// ============================================================================
+
+namespace v4 {
+
+/**
+ * v5 GPU Join (基于 SIGMOD'25 GFTR 模式)
+ *
+ * 优化特性:
+ * - Radix 分区实现顺序内存访问
+ * - Threadgroup memory 缓存
+ * - SIMD prefix sum 批量结果收集
+ */
+size_t hash_join_gpu_v5(
+    const int32_t* build_keys, size_t build_count,
+    const int32_t* probe_keys, size_t probe_count,
+    JoinType join_type, JoinResult* result,
+    const JoinConfigV4& config);
+
+/**
+ * 检查 v5 GPU 是否可用
+ */
+bool is_gpu_v5_ready();
+
+} // namespace v4
+
+// ============================================================================
+// UMA 优化版本 - 真正的零拷贝
+// ============================================================================
+
+namespace uma {
+
+// 前向声明
+struct JoinResultUMA;
+
+/**
+ * UMA 优化的 GPU Hash Join
+ *
+ * 特点:
+ * - 尝试零拷贝包装输入数据 (需要页对齐)
+ * - 使用缓冲区池减少分配开销
+ * - 流水线化 kernel 执行
+ * - Shared Events 减少同步
+ */
+size_t hash_join_gpu_uma(
+    const int32_t* build_keys, size_t build_count,
+    const int32_t* probe_keys, size_t probe_count,
+    JoinType join_type, JoinResult* result,
+    const JoinConfigV4& config);
+
+/**
+ * 完全零拷贝版本 (使用 JoinResultUMA)
+ *
+ * 结果直接写入 UMA 缓冲区，无需任何拷贝
+ */
+size_t hash_join_gpu_uma_zerocopy(
+    const int32_t* build_keys, size_t build_count,
+    const int32_t* probe_keys, size_t probe_count,
+    JoinType join_type,
+    JoinResultUMA* result);
+
+/**
+ * 检查 UMA GPU 是否可用
+ */
+bool is_uma_gpu_ready();
+
+} // namespace uma
+
 } // namespace join
 } // namespace thunderduck
 

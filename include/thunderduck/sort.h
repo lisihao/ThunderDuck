@@ -287,6 +287,64 @@ void topk_max_i32_v5(const int32_t* data, size_t count, size_t k,
 void topk_min_i32_v5(const int32_t* data, size_t count, size_t k,
                      int32_t* out_values, uint32_t* out_indices = nullptr);
 
+// ============================================================================
+// v6.0 UMA 优化版本 - GPU 加速 + 零拷贝
+// ============================================================================
+
+/**
+ * TopK 策略
+ */
+enum class TopKStrategy {
+    AUTO,           // 自动选择
+    CPU_HEAP,       // CPU 堆方法
+    CPU_SAMPLE,     // CPU 采样预过滤 (v4)
+    CPU_COUNT,      // CPU Count-Based (v5)
+    GPU_BITONIC,    // GPU Bitonic Sort + 截断
+    GPU_FILTER,     // GPU 并行过滤 + 小规模排序
+};
+
+/**
+ * v6.0 TopK 配置
+ */
+struct TopKConfigV6 {
+    TopKStrategy strategy = TopKStrategy::AUTO;
+    float cardinality_hint = -1.0f;  // 预估基数比例 (0-1), -1 表示未知
+};
+
+/**
+ * 检查 GPU TopK 是否可用
+ */
+bool is_topk_gpu_available();
+
+/**
+ * v6.0 UMA 优化版 Top-K Max
+ *
+ * 核心优化: UMA 零拷贝 + GPU 并行
+ *
+ * 策略选择:
+ * - N < 100K: CPU 方法 (v5)
+ * - N >= 100K, K <= 64: GPU 并行过滤
+ * - N >= 100K, K > 64: GPU Bitonic Sort
+ *
+ * @param data 输入数组 (建议页对齐 16KB)
+ * @param count 元素数量
+ * @param k 要获取的元素数量
+ * @param out_values 输出值数组
+ * @param out_indices 输出索引数组（可选）
+ */
+void topk_max_i32_v6(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
+void topk_max_i32_v6_config(const int32_t* data, size_t count, size_t k,
+                             int32_t* out_values, uint32_t* out_indices,
+                             const TopKConfigV6& config);
+
+/**
+ * v6.0 UMA 优化版 Top-K Min
+ */
+void topk_min_i32_v6(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 
