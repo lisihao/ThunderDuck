@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/platform-Apple%20Silicon-orange.svg)](https://www.apple.com/mac/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-ThunderDuck 是一个针对 Apple M4 芯片优化的 DuckDB 算子后端，通过深度利用 M4 的 SIMD 指令集、Neural Engine (NPU) 和统一内存架构，实现核心算子的极致性能。
+ThunderDuck 是一个针对 Apple M4 芯片优化的 DuckDB 算子后端，通过深度利用 M4 的 SIMD 指令集和统一内存架构，实现核心算子的极致性能。
 
 ---
 
@@ -14,46 +14,45 @@ ThunderDuck 是一个针对 Apple M4 芯片优化的 DuckDB 算子后端，通�
 
 | 指标 | 结果 |
 |------|------|
-| 总测试数 | 14 |
-| **ThunderDuck 胜出** | **10 (71%)** |
-| 最大加速比 | **24,130x** (COUNT 操作) |
-| Sort 加速 | **5x** (Radix Sort) |
-| Aggregation 加速 | **3-5x** |
+| 总测试数 | 23 |
+| **ThunderDuck 胜出** | **22 (95.7%)** |
+| 最大加速比 | **26,350x** (COUNT 操作) |
+| 平均加速比 | **1,152x** |
 
 ### 分类性能
 
-| 类别 | 胜率 | 最佳加速比 |
-|------|------|-----------|
-| **Aggregation** | 100% (4/4) | 24,130x |
-| **Sort** | 100% (2/2) | 5.03x |
-| TopK | 66% (2/3) | 2.75x |
-| Filter | 50% (2/4) | 1.45x |
-| Join | 0% (0/1) | - |
+| 类别 | 平均加速比 | 最大加速比 | 胜率 |
+|------|-----------|-----------|------|
+| **Aggregate** | 4,397x | 26,350x | 100% |
+| **Filter** | 12x | 42x | 100% |
+| **TopK** | 8x | 24x | 83% |
+| **Join** | 5x | 13x | 100% |
+| **Sort** | 1.9x | 2.3x | 100% |
 
-详见 [性能分析报告](docs/PERFORMANCE_ANALYSIS.md)
+详见 [综合性能报告](docs/BENCHMARK_REPORT_COMPREHENSIVE.md)
 
 ---
 
 ## 特性
 
 - **SIMD 加速** - 利用 128-bit ARM Neon 指令并行处理数据
-- **Radix Sort** - O(n) 时间复杂度，比 DuckDB 快 5x
-- **合并 minmax** - 单次遍历计算 MIN 和 MAX
-- **位图过滤** - 高效的范围查询
-- **缓存优化** - 128 字节缓存行对齐，软件预取
-- **零拷贝** - 利用统一内存架构，CPU/NPU 共享数据
+- **Radix Sort** - O(n) 时间复杂度，比 DuckDB 快 1.5-2.3x
+- **采样预过滤 TopK** - 高基数场景下达到 2-5x 加速
+- **Robin Hood Hash Join** - SIMD 加速探测，1.1-13x 加速
+- **缓存优化** - 128 字节缓存行对齐，L2 流水线预取
+- **零拷贝** - 利用统一内存架构
 
 ---
 
 ## 优化算子
 
-| 算子 | 优化技术 | 当前加速比 | v3.0 目标 |
-|------|----------|------------|----------|
-| **Aggregation** | 16元素/迭代, 4累加器, 预取 | 3-24,000x | - |
-| **Sort** | LSD Radix Sort (11-11-10 位) | 5x | - |
-| **Filter** | SIMD 批量比较、位图过滤 | 1.1-1.5x | 1.5x+ |
-| **TopK** | 堆选择、nth_element | 2-3x | 3x+ |
-| **Join** | Robin Hood Hash | 0.08x | 1.5x+ |
+| 算子 | 版本 | 优化技术 | 加速比 |
+|------|------|----------|--------|
+| **Aggregate** | v2 | 16元素/迭代, 4累加器, 预取 | 1.3-26,350x |
+| **Filter** | v3 | SIMD 批量比较、L2 预取 | 2.4-42x |
+| **TopK** | v4 | 采样预过滤 + SIMD 批量跳过 | 2.9-24x |
+| **Join** | v3 | Robin Hood Hash + SIMD 探测 | 1.1-13x |
+| **Sort** | v2 | LSD Radix Sort (11-11-10 位) | 1.5-2.3x |
 
 ---
 
@@ -76,9 +75,6 @@ cd ThunderDuck
 # 构建
 make clean && make
 
-# 运行测试
-./run_tests
-
 # 运行基准测试
 ./build/benchmark_app
 ```
@@ -86,17 +82,11 @@ make clean && make
 ### 运行 Benchmark
 
 ```bash
-# 小数据集快速测试
-./build/benchmark_app --small
+# 综合性能测试
+./build/comprehensive_benchmark
 
-# 中等数据集 (默认)
-./build/benchmark_app --medium
-
-# 大数据集
-./build/benchmark_app --large
-
-# 详细报告
-./build/detailed_benchmark_app
+# 基数敏感性测试 (TopK)
+./build/topk_v5_benchmark
 ```
 
 ---
@@ -108,33 +98,39 @@ ThunderDuck/
 ├── src/
 │   ├── core/                    # 核心框架
 │   ├── operators/               # 优化算子实现
-│   │   ├── filter/
-│   │   │   ├── simd_filter.cpp      # v1 Filter
-│   │   │   └── simd_filter_v2.cpp   # v2 Filter
-│   │   ├── aggregate/
-│   │   │   ├── simd_aggregate.cpp   # v1 Aggregation
-│   │   │   └── simd_aggregate_v2.cpp # v2 Aggregation
-│   │   ├── sort/
-│   │   │   └── radix_sort.cpp       # Radix Sort
-│   │   ├── topk/
-│   │   │   └── topk.cpp             # Top-K
-│   │   └── join/
-│   │       └── robin_hood_hash.cpp  # Robin Hood Hash
+│   │   ├── filter/              # Filter v1/v2/v3
+│   │   ├── aggregate/           # Aggregate v1/v2
+│   │   ├── sort/                # Sort/TopK v3/v4/v5
+│   │   └── join/                # Join v1/v2/v3
 │   └── utils/                   # 工具函数
 ├── include/                     # 公共头文件
-├── tests/                       # 测试
 ├── benchmark/                   # 性能基准
-│   ├── benchmark.cpp
-│   └── detailed_benchmark.cpp
 └── docs/                        # 文档
-    ├── THUNDERDUCK_DESIGN.md        # 设计文档
-    ├── OPTIMIZATION_PLAN.md         # 优化计划
-    ├── PERFORMANCE_ANALYSIS.md      # 性能分析
-    ├── FILTER_COUNT_OPTIMIZATION_DESIGN.md  # v3 Filter 设计
-    ├── DETAILED_BENCHMARK_REPORT.md # 详细测试报告
-    ├── REQUIREMENTS.md              # 需求文档
-    └── TESTING.md                   # 测试文档
 ```
+
+---
+
+## 文档
+
+完整文档索引: [docs/INDEX.md](docs/INDEX.md)
+
+### 核心文档
+
+| 文档 | 描述 |
+|------|------|
+| [文档索引](docs/INDEX.md) | 所有文档的索引和导航 |
+| [架构设计](docs/ARCHITECTURE.md) | 系统架构详细说明 |
+| [综合测试报告](docs/BENCHMARK_REPORT_COMPREHENSIVE.md) | 最新性能对比报告 |
+
+### 优化设计文档
+
+| 文档 | 描述 |
+|------|------|
+| [Filter v3 优化](docs/FILTER_COUNT_OPTIMIZATION_DESIGN.md) | Filter 算子深度优化 |
+| [TopK v4 优化](docs/TOPK_V4_OPTIMIZATION_DESIGN.md) | 采样预过滤设计 |
+| [TopK 基数分析](docs/TOPK_CARDINALITY_ANALYSIS.md) | 基数敏感性研究 |
+| [Join v3 优化](docs/JOIN_V3_OPTIMIZATION_DESIGN.md) | Robin Hood Hash 设计 |
+| [内存优化](docs/MEMORY_OPTIMIZATION_DESIGN.md) | 缓存行优化策略 |
 
 ---
 
@@ -142,25 +138,11 @@ ThunderDuck/
 
 | 组件 | 技术 |
 |------|------|
-| **语言** | C/C++17, AArch64 汇编 |
+| **语言** | C/C++17 |
 | **SIMD** | ARM Neon Intrinsics |
 | **编译器** | Clang 17.0.0 |
-| **构建** | Makefile / CMake |
+| **构建** | Makefile |
 | **依赖** | DuckDB 1.1.3 |
-
----
-
-## 文档
-
-| 文档 | 描述 |
-|------|------|
-| [设计文档](docs/THUNDERDUCK_DESIGN.md) | 完整的技术设计和架构 |
-| [优化计划](docs/OPTIMIZATION_PLAN.md) | v1-v3 优化路线图 |
-| [性能分析](docs/PERFORMANCE_ANALYSIS.md) | 详细性能对比和分析 |
-| [Filter 优化设计](docs/FILTER_COUNT_OPTIMIZATION_DESIGN.md) | v3 Filter 深度优化 |
-| [详细测试报告](docs/DETAILED_BENCHMARK_REPORT.md) | 包含 SQL 的完整测试报告 |
-| [需求文档](docs/REQUIREMENTS.md) | 功能和性能需求 |
-| [测试文档](docs/TESTING.md) | 测试策略和用例 |
 
 ---
 
@@ -169,8 +151,7 @@ ThunderDuck/
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
 | v1.0 | 2026-01-24 | 初始版本，基础 SIMD 实现 |
-| v2.0 | 2026-01-24 | Radix Sort, 合并 minmax, 16元素/迭代 |
-| v3.0 | 计划中 | Filter 模板特化, 独立累加器, TopK 自适应 |
+| v2.0 | 2026-01-24 | Radix Sort, TopK v4, Join v3, 95.7% 胜率 |
 
 ---
 
@@ -186,4 +167,4 @@ MIT License
 
 ---
 
-*ThunderDuck v2.0 - 针对 Apple M4 优化，71% 测试超越 DuckDB！*
+*ThunderDuck v2.0 - 针对 Apple M4 优化，95.7% 测试超越 DuckDB！*

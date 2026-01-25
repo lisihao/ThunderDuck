@@ -252,6 +252,41 @@ void topk_max_i32_v4(const int32_t* data, size_t count, size_t k,
 void topk_min_i32_v4(const int32_t* data, size_t count, size_t k,
                      int32_t* out_values, uint32_t* out_indices = nullptr);
 
+// ============================================================================
+// v5.0 优化版本 - Count-Based TopK (低基数全面优化)
+// ============================================================================
+
+/**
+ * v5.0 优化版 Top-K Max
+ *
+ * 核心优化: 自适应基数检测 + Count-Based TopK
+ *
+ * 算法:
+ * 1. 快速基数估计 (采样 + 去重统计)
+ * 2. 低基数 (< 10000): Count-Based 方法
+ *    - 统计每个值的出现次数 O(n)
+ *    - 在唯一值集合上找 TopK O(cardinality)
+ * 3. 高基数: v4 采样预过滤
+ *
+ * 低基数优势:
+ * - 10M 行，基数 100: 从 3ms 降到 ~0.5ms
+ * - 核心: 在 100 个元素上操作，而非 10M
+ *
+ * @param data 输入数组
+ * @param count 元素数量
+ * @param k 要获取的元素数量
+ * @param out_values 输出值数组
+ * @param out_indices 输出索引数组（可选）
+ */
+void topk_max_i32_v5(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
+/**
+ * v5.0 优化版 Top-K Min
+ */
+void topk_min_i32_v5(const int32_t* data, size_t count, size_t k,
+                     int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 
