@@ -1,11 +1,16 @@
 /**
  * ThunderDuck - SIMD Aggregation Implementation v4.0
  *
- * V9 性能优化版本：
- * - P0: 向量化哈希分组 (分区+顺序累加)
- * - P1: 预取距离优化 (64B → 256B)
- * - P2: 缓存分块 (L2 友好)
- * - P3: 多线程分组聚合
+ * V9 清理版本 - 只保留有效优化:
+ * - P3: 多线程分组聚合 (2.87-3x 加速)
+ * - P0: 展开循环 + 预取 (分组聚合 ~18% 提升)
+ *
+ * 已移除 (测试显示无效或回退):
+ * - P1: 256B预取 (实测 -9%~-13% 回退)
+ * - P2: 缓存分块 (实测 ~0% 收益)
+ *
+ * 对于 SUM/MIN/MAX 等单算子，V7/V8 的 v2 实现已是最优，
+ * v4 版本委托给 v2 保持兼容性。
  */
 
 #include "thunderduck/aggregate.h"
@@ -14,7 +19,6 @@
 #include <algorithm>
 #include <vector>
 #include <thread>
-#include <atomic>
 
 #ifdef __aarch64__
 #include <arm_neon.h>
@@ -27,271 +31,44 @@ namespace aggregate {
 // 常量定义
 // ============================================================================
 
-// M4 缓存参数
-constexpr size_t CACHE_LINE_SIZE = 128;      // M4 L1 cache line
-constexpr size_t L2_CACHE_SIZE = 12 * 1024 * 1024;  // ~12MB L2
-constexpr size_t CACHE_BLOCK_SIZE = L2_CACHE_SIZE / 4;  // 3MB 块
-
-// 预取参数
-constexpr size_t PREFETCH_DISTANCE = 256;    // 256B = 2 cache lines (v4优化)
-constexpr size_t PREFETCH_DISTANCE_GROUP = 512;  // 分组聚合用更大预取
-
 // 多线程参数
 constexpr size_t MIN_ELEMENTS_PER_THREAD = 100000;  // 最小每线程元素数
 constexpr size_t MAX_THREADS = 4;  // M4 性能核数量
 
-// 分组聚合阈值
-constexpr size_t GROUP_PARTITION_THRESHOLD = 10000;  // 分区优化阈值
-
 // ============================================================================
-// P1: 预取距离优化 - SUM v4
+// SUM v4 - 委托给 v2 (P1 256B预取已移除，v2 更优)
 // ============================================================================
 
 int64_t sum_i32_v4(const int32_t* input, size_t count) {
-    if (count == 0 || !input) return 0;
-
-#ifdef __aarch64__
-    // 4个 int64 累加器
-    int64x2_t sum0 = vdupq_n_s64(0);
-    int64x2_t sum1 = vdupq_n_s64(0);
-    int64x2_t sum2 = vdupq_n_s64(0);
-    int64x2_t sum3 = vdupq_n_s64(0);
-    size_t i = 0;
-
-    // P1: 更激进的预取 - 256B (vs v2的64B)
-    // 主循环：每次处理 32 个元素 (vs v2的16个)
-    for (; i + 32 <= count; i += 32) {
-        // 预取 256B ahead (64 elements = 256 bytes)
-        __builtin_prefetch(input + i + 64, 0, 3);  // L1
-        __builtin_prefetch(input + i + 128, 0, 2); // L2
-
-        // 加载 32 个 int32
-        int32x4_t d0 = vld1q_s32(input + i);
-        int32x4_t d1 = vld1q_s32(input + i + 4);
-        int32x4_t d2 = vld1q_s32(input + i + 8);
-        int32x4_t d3 = vld1q_s32(input + i + 12);
-        int32x4_t d4 = vld1q_s32(input + i + 16);
-        int32x4_t d5 = vld1q_s32(input + i + 20);
-        int32x4_t d6 = vld1q_s32(input + i + 24);
-        int32x4_t d7 = vld1q_s32(input + i + 28);
-
-        // 扩展到 64 位并累加 (pairwise add long)
-        sum0 = vaddq_s64(sum0, vpaddlq_s32(d0));
-        sum1 = vaddq_s64(sum1, vpaddlq_s32(d1));
-        sum2 = vaddq_s64(sum2, vpaddlq_s32(d2));
-        sum3 = vaddq_s64(sum3, vpaddlq_s32(d3));
-        sum0 = vaddq_s64(sum0, vpaddlq_s32(d4));
-        sum1 = vaddq_s64(sum1, vpaddlq_s32(d5));
-        sum2 = vaddq_s64(sum2, vpaddlq_s32(d6));
-        sum3 = vaddq_s64(sum3, vpaddlq_s32(d7));
-    }
-
-    // 处理剩余 16 元素块
-    for (; i + 16 <= count; i += 16) {
-        int32x4_t d0 = vld1q_s32(input + i);
-        int32x4_t d1 = vld1q_s32(input + i + 4);
-        int32x4_t d2 = vld1q_s32(input + i + 8);
-        int32x4_t d3 = vld1q_s32(input + i + 12);
-
-        sum0 = vaddq_s64(sum0, vpaddlq_s32(d0));
-        sum1 = vaddq_s64(sum1, vpaddlq_s32(d1));
-        sum2 = vaddq_s64(sum2, vpaddlq_s32(d2));
-        sum3 = vaddq_s64(sum3, vpaddlq_s32(d3));
-    }
-
-    // 合并累加器
-    int64x2_t sum_01 = vaddq_s64(sum0, sum1);
-    int64x2_t sum_23 = vaddq_s64(sum2, sum3);
-    int64x2_t sum_all = vaddq_s64(sum_01, sum_23);
-
-    int64_t result = vaddvq_s64(sum_all);
-
-    // 标量处理剩余
-    for (; i < count; ++i) {
-        result += input[i];
-    }
-
-    return result;
-#else
-    int64_t result = 0;
-    for (size_t i = 0; i < count; ++i) {
-        result += input[i];
-    }
-    return result;
-#endif
+    return sum_i32_v2(input, count);
 }
-
-// ============================================================================
-// P2: 缓存分块 SUM
-// ============================================================================
 
 int64_t sum_i32_v4_blocked(const int32_t* input, size_t count) {
-    if (count == 0 || !input) return 0;
-
-    // 计算每块元素数 (3MB / 4B = 768K 元素)
-    constexpr size_t ELEMENTS_PER_BLOCK = CACHE_BLOCK_SIZE / sizeof(int32_t);
-
-    int64_t total = 0;
-    size_t processed = 0;
-
-    while (processed < count) {
-        size_t block_size = std::min(ELEMENTS_PER_BLOCK, count - processed);
-        total += sum_i32_v4(input + processed, block_size);
-        processed += block_size;
-    }
-
-    return total;
+    // P2 缓存分块无明显收益，直接委托 v2
+    return sum_i32_v2(input, count);
 }
 
 // ============================================================================
-// P1 + P2: MIN/MAX v4 (预取优化 + 合并)
+// MIN/MAX v4 - 委托给 v2 (P1 256B预取已移除，v2 更优)
 // ============================================================================
 
 void minmax_i32_v4(const int32_t* input, size_t count,
                    int32_t* out_min, int32_t* out_max) {
-    if (count == 0) {
-        *out_min = std::numeric_limits<int32_t>::max();
-        *out_max = std::numeric_limits<int32_t>::min();
-        return;
-    }
-
-#ifdef __aarch64__
-    int32x4_t min_vec = vdupq_n_s32(std::numeric_limits<int32_t>::max());
-    int32x4_t max_vec = vdupq_n_s32(std::numeric_limits<int32_t>::min());
-    size_t i = 0;
-
-    // 主循环：每次处理 32 个元素
-    for (; i + 32 <= count; i += 32) {
-        // P1: 激进预取
-        __builtin_prefetch(input + i + 64, 0, 3);
-        __builtin_prefetch(input + i + 128, 0, 2);
-
-        int32x4_t d0 = vld1q_s32(input + i);
-        int32x4_t d1 = vld1q_s32(input + i + 4);
-        int32x4_t d2 = vld1q_s32(input + i + 8);
-        int32x4_t d3 = vld1q_s32(input + i + 12);
-        int32x4_t d4 = vld1q_s32(input + i + 16);
-        int32x4_t d5 = vld1q_s32(input + i + 20);
-        int32x4_t d6 = vld1q_s32(input + i + 24);
-        int32x4_t d7 = vld1q_s32(input + i + 28);
-
-        // 分层合并 min/max
-        int32x4_t min_01 = vminq_s32(d0, d1);
-        int32x4_t min_23 = vminq_s32(d2, d3);
-        int32x4_t min_45 = vminq_s32(d4, d5);
-        int32x4_t min_67 = vminq_s32(d6, d7);
-
-        int32x4_t max_01 = vmaxq_s32(d0, d1);
-        int32x4_t max_23 = vmaxq_s32(d2, d3);
-        int32x4_t max_45 = vmaxq_s32(d4, d5);
-        int32x4_t max_67 = vmaxq_s32(d6, d7);
-
-        int32x4_t min_0123 = vminq_s32(min_01, min_23);
-        int32x4_t min_4567 = vminq_s32(min_45, min_67);
-        int32x4_t max_0123 = vmaxq_s32(max_01, max_23);
-        int32x4_t max_4567 = vmaxq_s32(max_45, max_67);
-
-        int32x4_t min_batch = vminq_s32(min_0123, min_4567);
-        int32x4_t max_batch = vmaxq_s32(max_0123, max_4567);
-
-        min_vec = vminq_s32(min_vec, min_batch);
-        max_vec = vmaxq_s32(max_vec, max_batch);
-    }
-
-    // 处理剩余 4 元素块
-    for (; i + 4 <= count; i += 4) {
-        int32x4_t data = vld1q_s32(input + i);
-        min_vec = vminq_s32(min_vec, data);
-        max_vec = vmaxq_s32(max_vec, data);
-    }
-
-    *out_min = vminvq_s32(min_vec);
-    *out_max = vmaxvq_s32(max_vec);
-
-    // 标量处理剩余
-    for (; i < count; ++i) {
-        if (input[i] < *out_min) *out_min = input[i];
-        if (input[i] > *out_max) *out_max = input[i];
-    }
-#else
-    *out_min = input[0];
-    *out_max = input[0];
-    for (size_t i = 1; i < count; ++i) {
-        if (input[i] < *out_min) *out_min = input[i];
-        if (input[i] > *out_max) *out_max = input[i];
-    }
-#endif
+    minmax_i32(input, count, out_min, out_max);
 }
 
 // ============================================================================
-// P1 + P2: 融合统计量 v4
+// 融合统计量 v4 - 委托给基础版本
 // ============================================================================
 
 AggregateStats aggregate_all_i32_v4(const int32_t* input, size_t count) {
-    AggregateStats stats = {0, 0, 0, 0};
-    if (count == 0) return stats;
-
-    stats.count = static_cast<int64_t>(count);
-
-#ifdef __aarch64__
-    int64x2_t sum0 = vdupq_n_s64(0);
-    int64x2_t sum1 = vdupq_n_s64(0);
-    int32x4_t min_vec = vdupq_n_s32(std::numeric_limits<int32_t>::max());
-    int32x4_t max_vec = vdupq_n_s32(std::numeric_limits<int32_t>::min());
-    size_t i = 0;
-
-    // 主循环：每次处理 16 个元素
-    for (; i + 16 <= count; i += 16) {
-        // P1: 激进预取
-        __builtin_prefetch(input + i + 64, 0, 3);
-        __builtin_prefetch(input + i + 128, 0, 2);
-
-        int32x4_t d0 = vld1q_s32(input + i);
-        int32x4_t d1 = vld1q_s32(input + i + 4);
-        int32x4_t d2 = vld1q_s32(input + i + 8);
-        int32x4_t d3 = vld1q_s32(input + i + 12);
-
-        // SUM (扩展到 64 位)
-        sum0 = vaddq_s64(sum0, vpaddlq_s32(d0));
-        sum1 = vaddq_s64(sum1, vpaddlq_s32(d1));
-        sum0 = vaddq_s64(sum0, vpaddlq_s32(d2));
-        sum1 = vaddq_s64(sum1, vpaddlq_s32(d3));
-
-        // MIN/MAX
-        int32x4_t batch_min = vminq_s32(vminq_s32(d0, d1), vminq_s32(d2, d3));
-        int32x4_t batch_max = vmaxq_s32(vmaxq_s32(d0, d1), vmaxq_s32(d2, d3));
-        min_vec = vminq_s32(min_vec, batch_min);
-        max_vec = vmaxq_s32(max_vec, batch_max);
-    }
-
-    stats.sum = vaddvq_s64(vaddq_s64(sum0, sum1));
-    stats.min_val = vminvq_s32(min_vec);
-    stats.max_val = vmaxvq_s32(max_vec);
-
-    // 标量处理剩余
-    for (; i < count; ++i) {
-        stats.sum += input[i];
-        if (input[i] < stats.min_val) stats.min_val = input[i];
-        if (input[i] > stats.max_val) stats.max_val = input[i];
-    }
-#else
-    stats.min_val = input[0];
-    stats.max_val = input[0];
-    for (size_t i = 0; i < count; ++i) {
-        stats.sum += input[i];
-        if (input[i] < stats.min_val) stats.min_val = input[i];
-        if (input[i] > stats.max_val) stats.max_val = input[i];
-    }
-#endif
-
-    return stats;
+    return aggregate_all_i32(input, count);
 }
 
 // ============================================================================
-// P0: 分组聚合优化
+// P0: 分组聚合优化 - 展开循环 + 预取
 // ============================================================================
-// 注: 分区优化在测试中表现不佳 (开销 > 收益)
-// V9 改用: 展开循环 + 预取 + 多线程并行
+// 测试显示 ~18% 提升，保留此优化
 
 void group_sum_i32_v4(const int32_t* values, const uint32_t* groups,
                       size_t count, size_t num_groups, int64_t* out_sums) {
@@ -300,14 +77,11 @@ void group_sum_i32_v4(const int32_t* values, const uint32_t* groups,
     // 初始化输出
     std::memset(out_sums, 0, num_groups * sizeof(int64_t));
 
-    // V9 优化: 使用展开循环 + 预取
-    // 分区优化开销过大,直接使用优化的标量循环
     size_t i = 0;
 
 #ifdef __aarch64__
     // 4路展开 + 预取
     for (; i + 4 <= count; i += 4) {
-        // 预取
         __builtin_prefetch(&groups[i + 32], 0, 2);
         __builtin_prefetch(&values[i + 32], 0, 2);
 
@@ -333,7 +107,7 @@ void group_sum_i32_v4(const int32_t* values, const uint32_t* groups,
 }
 
 // ============================================================================
-// P3: 多线程分组聚合
+// P3: 多线程分组聚合 - 核心优化 (2.87-3x 加速)
 // ============================================================================
 
 void group_sum_i32_v4_parallel(const int32_t* values, const uint32_t* groups,
@@ -406,7 +180,6 @@ void group_count_v4(const uint32_t* groups, size_t count,
 
     std::memset(out_counts, 0, num_groups * sizeof(size_t));
 
-    // V9 优化: 展开循环 + 预取
     size_t i = 0;
 
 #ifdef __aarch64__
@@ -484,7 +257,7 @@ void group_count_v4_parallel(const uint32_t* groups, size_t count,
 }
 
 // ============================================================================
-// P0 + P3: 分组 MIN/MAX v4
+// P0: 分组 MIN/MAX - 展开循环 + 预取
 // ============================================================================
 
 void group_min_i32_v4(const int32_t* values, const uint32_t* groups,
@@ -493,7 +266,6 @@ void group_min_i32_v4(const int32_t* values, const uint32_t* groups,
 
     std::fill(out_mins, out_mins + num_groups, std::numeric_limits<int32_t>::max());
 
-    // V9 优化: 展开循环 + 预取
     size_t i = 0;
 
 #ifdef __aarch64__
@@ -525,7 +297,6 @@ void group_max_i32_v4(const int32_t* values, const uint32_t* groups,
 
     std::fill(out_maxs, out_maxs + num_groups, std::numeric_limits<int32_t>::min());
 
-    // V9 优化: 展开循环 + 预取
     size_t i = 0;
 
 #ifdef __aarch64__
