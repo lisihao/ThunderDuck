@@ -105,9 +105,16 @@ Executor StrategySelector::selectFilterStrategy(const DataCharacteristics& data)
         return Executor::CPU_SIMD;
     }
 
-    // 选择率检查: 高选择率时 CPU 更优 (输出多，原子争用高)
-    if (data.selectivity > 0 && data.selectivity > 0.5f) {
-        last_reason_ = "High selectivity favors CPU";
+    // 选择率检查:
+    // - 未知选择率 (<0): 默认使用 CPU (更稳定)
+    // - 高选择率 (>50%): CPU 更优 (输出多，GPU原子争用高)
+    // - 中等选择率 (10%-50%): CPU 更优 (v3 SIMD 已高度优化)
+    if (data.selectivity < 0) {
+        last_reason_ = "Unknown selectivity, default to CPU";
+        return Executor::CPU_SIMD;
+    }
+    if (data.selectivity > 0.1f) {
+        last_reason_ = "Medium/high selectivity favors CPU";
         return Executor::CPU_SIMD;
     }
 

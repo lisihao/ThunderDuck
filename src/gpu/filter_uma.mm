@@ -346,15 +346,20 @@ FilterStrategy selectStrategy(size_t count, float selectivity_hint,
         return FilterStrategy::CPU_SIMD;
     }
 
-    // 根据选择率选择 GPU 策略
-    if (selectivity_hint >= 0 && selectivity_hint < 0.1f) {
-        return FilterStrategy::GPU_ATOMIC;
-    } else if (selectivity_hint >= 0.1f) {
-        return FilterStrategy::GPU_SCAN;
+    // 选择率未知时，CPU 更稳定
+    if (selectivity_hint < 0) {
+        return FilterStrategy::CPU_SIMD;
     }
 
-    // 默认使用原子版 (简单高效)
-    return FilterStrategy::GPU_ATOMIC;
+    // 根据选择率选择 GPU 策略
+    // 低选择率 (<10%): GPU 原子版高效
+    // 中高选择率 (>=10%): CPU 更优 (GPU 原子争用)
+    if (selectivity_hint < 0.1f) {
+        return FilterStrategy::GPU_ATOMIC;
+    }
+
+    // 高选择率时 CPU 更高效
+    return FilterStrategy::CPU_SIMD;
 }
 
 } // anonymous namespace
