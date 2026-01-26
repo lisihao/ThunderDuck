@@ -300,6 +300,87 @@ size_t filter_f32_v4(const float* input, size_t count,
                       CompareOp op, float value,
                       uint32_t* out_indices);
 
+// ============================================================================
+// v5.0 优化版本 - 掩码压缩LUT + 缓存对齐 + 字符串SIMD
+// ============================================================================
+
+/**
+ * v5.0 优化版计数
+ *
+ * 优化特性:
+ * - 128 字节缓存行对齐优化 (M4 L1)
+ * - 多级预取 (L1 + L2)
+ * - 对齐边界处理
+ */
+size_t count_i32_v5(const int32_t* input, size_t count,
+                     CompareOp op, int32_t value);
+
+/**
+ * v5.0 优化版位图生成
+ */
+size_t filter_to_bitmap_v5(const int32_t* input, size_t count,
+                            CompareOp op, int32_t value,
+                            uint64_t* bitmap);
+
+/**
+ * v5.0 优化版过滤
+ *
+ * 优化特性:
+ * - 4-bit LUT 掩码压缩 (加速 mask→indices)
+ * - 缓存对齐位图分配
+ * - 高选择率优化路径
+ */
+size_t filter_i32_v5(const int32_t* input, size_t count,
+                      CompareOp op, int32_t value,
+                      uint32_t* out_indices);
+
+// ============================================================================
+// 字符串过滤 - SIMD 优化
+// ============================================================================
+
+/**
+ * 字符串数组过滤 - 相等比较
+ *
+ * @param strings 字符串指针数组
+ * @param count 字符串数量
+ * @param target 目标字符串
+ * @param out_indices 输出索引数组
+ * @return 匹配数量
+ */
+size_t filter_string_eq(const char* const* strings, size_t count,
+                         const char* target, uint32_t* out_indices);
+
+/**
+ * 字符串数组过滤 - 前缀匹配 (LIKE 'prefix%')
+ */
+size_t filter_string_startswith(const char* const* strings, size_t count,
+                                 const char* prefix, uint32_t* out_indices);
+
+/**
+ * 字符串数组过滤 - 包含子串 (LIKE '%substr%')
+ */
+size_t filter_string_contains(const char* const* strings, size_t count,
+                               const char* substr, uint32_t* out_indices);
+
+// ============================================================================
+// 缓存对齐辅助函数
+// ============================================================================
+
+/**
+ * 检查指针是否 128 字节对齐
+ */
+bool is_filter_cache_aligned(const void* ptr);
+
+/**
+ * 分配 128 字节对齐内存
+ */
+void* filter_cache_alloc(size_t size);
+
+/**
+ * 释放缓存对齐内存
+ */
+void filter_cache_free(void* ptr);
+
 } // namespace filter
 } // namespace thunderduck
 
