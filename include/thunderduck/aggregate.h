@@ -244,6 +244,52 @@ void group_count_v3(const uint32_t* groups, size_t count,
 
 AggregateStats aggregate_all_i32_v3(const int32_t* input, size_t count);
 
+// ============================================================================
+// v4.0 优化版本 - P0~P3 性能优化
+// ============================================================================
+
+/**
+ * v4.0 SUM - P1预取优化 + P2缓存分块
+ * 32元素/迭代, 256B预取距离
+ */
+int64_t sum_i32_v4(const int32_t* input, size_t count);
+int64_t sum_i32_v4_blocked(const int32_t* input, size_t count);
+
+/**
+ * v4.0 MIN/MAX - P1预取优化
+ */
+void minmax_i32_v4(const int32_t* input, size_t count,
+                   int32_t* out_min, int32_t* out_max);
+
+/**
+ * v4.0 融合统计量 - P1+P2优化
+ */
+AggregateStats aggregate_all_i32_v4(const int32_t* input, size_t count);
+
+/**
+ * v4.0 分组聚合 - P0向量化哈希分组
+ */
+void group_sum_i32_v4(const int32_t* values, const uint32_t* groups,
+                      size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v4(const uint32_t* groups, size_t count,
+                    size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v4(const int32_t* values, const uint32_t* groups,
+                      size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v4(const int32_t* values, const uint32_t* groups,
+                      size_t count, size_t num_groups, int32_t* out_maxs);
+
+/**
+ * v4.0 多线程分组聚合 - P3并行优化
+ */
+void group_sum_i32_v4_parallel(const int32_t* values, const uint32_t* groups,
+                               size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v4_parallel(const uint32_t* groups, size_t count,
+                             size_t num_groups, size_t* out_counts);
+
 } // namespace aggregate
 } // namespace thunderduck
 

@@ -1,6 +1,6 @@
 # ThunderDuck 开发规范
 
-> **版本**: 1.0.0 | **更新日期**: 2026-01-24
+> **版本**: 1.1.0 | **更新日期**: 2026-01-26
 
 ## 项目概述
 
@@ -50,6 +50,57 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(sysctl -n hw.ncpu)
 ctest
 ```
+
+## 基准测试规则
+
+性能测试必须遵循以下规则以确保结果可靠：
+
+### 1. 使用中位数而非平均值
+
+```cpp
+// 正确: 使用中位数
+std::sort(times.begin(), times.end());
+double median = times[times.size() / 2];
+
+// 错误: 使用平均值 (受异常值影响大)
+double avg = std::accumulate(times.begin(), times.end(), 0.0) / n;
+```
+
+### 2. 报告标准差
+
+```cpp
+// 计算标准差
+double sq_sum = 0;
+for (double t : times) sq_sum += (t - median) * (t - median);
+double stddev = sqrt(sq_sum / times.size());
+
+// 输出格式: "1.234 ms (σ=0.05)"
+cout << median << " ms (σ=" << stddev << ")" << endl;
+```
+
+### 3. 剔除异常值
+
+使用 IQR (四分位距) 方法剔除异常值：
+
+```cpp
+// 计算 Q1, Q3, IQR
+std::sort(times.begin(), times.end());
+double q1 = times[times.size() / 4];
+double q3 = times[times.size() * 3 / 4];
+double iqr = q3 - q1;
+
+// 剔除 < Q1-1.5*IQR 或 > Q3+1.5*IQR 的值
+double lower = q1 - 1.5 * iqr;
+double upper = q3 + 1.5 * iqr;
+times.erase(std::remove_if(times.begin(), times.end(),
+    [&](double t) { return t < lower || t > upper; }), times.end());
+```
+
+### 4. 最小迭代次数
+
+- 微基准测试: ≥30 次迭代
+- 完整算子测试: ≥10 次迭代
+- 预热运行: ≥1 次 (不计入统计)
 
 ## 文档
 
