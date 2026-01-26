@@ -35,7 +35,7 @@ constexpr size_t SMALL_N_THRESHOLD = 500000;    // N < 500K 时使用 partial_so
 constexpr size_t LARGE_N_THRESHOLD = 1000000;   // N >= 1M 时启用采样预过滤
 constexpr size_t SAMPLE_SIZE = 8192;            // 采样数量
 constexpr size_t K_SMALL_THRESHOLD = 64;        // K <= 64 视为小 K
-constexpr size_t K_MEDIUM_THRESHOLD = 1024;     // K <= 1024 视为中等 K
+constexpr size_t K_MEDIUM_THRESHOLD = 4096;     // K <= 4096 视为中等 K (v4.2: 扩展以避免 nth_element 性能悬崖)
 
 // SIMD 批处理
 constexpr size_t SIMD_BATCH = 64;               // 每批 64 个元素 (16 个向量)
@@ -670,6 +670,12 @@ void topk_simd_heap_min(const int32_t* data, size_t count, size_t k,
 #endif // __aarch64__
 
 // 大 K: nth_element
+/**
+ * v4.2 优化: 大 K 使用 partial_sort 替代 nth_element + sort
+ *
+ * 原因: nth_element 对间接访问的缓存行为差
+ * partial_sort 对前 K 个元素排序，缓存更友好
+ */
 void topk_nth_element_max(const int32_t* data, size_t count, size_t k,
                            int32_t* out_values, uint32_t* out_indices) {
     std::vector<uint32_t> indices(count);
@@ -677,10 +683,9 @@ void topk_nth_element_max(const int32_t* data, size_t count, size_t k,
         indices[i] = static_cast<uint32_t>(i);
     }
 
-    std::nth_element(indices.begin(), indices.begin() + k, indices.end(),
-        [data](uint32_t a, uint32_t b) { return data[a] > data[b]; });
-
-    std::sort(indices.begin(), indices.begin() + k,
+    // v4.2: 使用 partial_sort 替代 nth_element + sort
+    // partial_sort 只排前 K 个，比 nth_element 全遍历更高效
+    std::partial_sort(indices.begin(), indices.begin() + k, indices.end(),
         [data](uint32_t a, uint32_t b) { return data[a] > data[b]; });
 
     for (size_t i = 0; i < k; ++i) {
@@ -696,10 +701,8 @@ void topk_nth_element_min(const int32_t* data, size_t count, size_t k,
         indices[i] = static_cast<uint32_t>(i);
     }
 
-    std::nth_element(indices.begin(), indices.begin() + k, indices.end(),
-        [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
-
-    std::sort(indices.begin(), indices.begin() + k,
+    // v4.2: 使用 partial_sort 替代 nth_element + sort
+    std::partial_sort(indices.begin(), indices.begin() + k, indices.end(),
         [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
 
     for (size_t i = 0; i < k; ++i) {
