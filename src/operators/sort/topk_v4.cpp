@@ -31,6 +31,7 @@ namespace sort {
 namespace {
 
 // v4.0 策略阈值
+constexpr size_t SMALL_N_THRESHOLD = 500000;    // N < 500K 时使用 partial_sort (v4.1 优化)
 constexpr size_t LARGE_N_THRESHOLD = 1000000;   // N >= 1M 时启用采样预过滤
 constexpr size_t SAMPLE_SIZE = 8192;            // 采样数量
 constexpr size_t K_SMALL_THRESHOLD = 64;        // K <= 64 视为小 K
@@ -407,6 +408,59 @@ void topk_sampled_prefilter_min(const int32_t* data, size_t count, size_t k,
 } // anonymous namespace
 
 // ============================================================================
+// v4.1 优化: partial_sort 回退 (针对小数据量)
+// ============================================================================
+
+namespace {
+
+/**
+ * 使用 partial_sort 实现 TopK (小数据量最优)
+ *
+ * 优势:
+ * - 比堆方法更少的内存分配
+ * - partial_sort 对小 K 高度优化
+ * - 无堆维护开销
+ *
+ * 适用: N < 500K
+ */
+void topk_partial_sort_max(const int32_t* data, size_t count, size_t k,
+                            int32_t* out_values, uint32_t* out_indices) {
+    // 创建索引数组
+    std::vector<uint32_t> indices(count);
+    for (size_t i = 0; i < count; ++i) {
+        indices[i] = static_cast<uint32_t>(i);
+    }
+
+    // partial_sort: 只排前 K 个
+    std::partial_sort(indices.begin(), indices.begin() + k, indices.end(),
+        [data](uint32_t a, uint32_t b) { return data[a] > data[b]; });
+
+    // 输出结果
+    for (size_t i = 0; i < k; ++i) {
+        out_values[i] = data[indices[i]];
+        if (out_indices) out_indices[i] = indices[i];
+    }
+}
+
+void topk_partial_sort_min(const int32_t* data, size_t count, size_t k,
+                            int32_t* out_values, uint32_t* out_indices) {
+    std::vector<uint32_t> indices(count);
+    for (size_t i = 0; i < count; ++i) {
+        indices[i] = static_cast<uint32_t>(i);
+    }
+
+    std::partial_sort(indices.begin(), indices.begin() + k, indices.end(),
+        [data](uint32_t a, uint32_t b) { return data[a] < data[b]; });
+
+    for (size_t i = 0; i < k; ++i) {
+        out_values[i] = data[indices[i]];
+        if (out_indices) out_indices[i] = indices[i];
+    }
+}
+
+} // anonymous namespace
+
+// ============================================================================
 // v3.0 原有策略 (用于中小数据集)
 // ============================================================================
 
@@ -665,6 +719,13 @@ void topk_max_i32_v4(const int32_t* data, size_t count, size_t k,
     if (k == 0 || count == 0) return;
     k = std::min(k, count);
 
+    // v4.1 优化: 小数据量直接 partial_sort
+    // 对于 N < 500K 且 K 小的场景，partial_sort 比堆方法更快
+    if (count < SMALL_N_THRESHOLD && k <= K_SMALL_THRESHOLD) {
+        topk_partial_sort_max(data, count, k, out_values, out_indices);
+        return;
+    }
+
     // 核心优化: 大数据量 + 小 K → 采样预过滤
     if (count >= LARGE_N_THRESHOLD && k <= K_SMALL_THRESHOLD) {
         // T4 场景: 10M 行, K=10
@@ -672,7 +733,7 @@ void topk_max_i32_v4(const int32_t* data, size_t count, size_t k,
         return;
     }
 
-    // 其他场景使用原有策略
+    // 中等数据量 (500K-1M) 使用堆方法
     if (k <= K_SMALL_THRESHOLD) {
         topk_heap_small_max(data, count, k, out_values, out_indices);
     }
@@ -691,11 +752,19 @@ void topk_min_i32_v4(const int32_t* data, size_t count, size_t k,
     if (k == 0 || count == 0) return;
     k = std::min(k, count);
 
+    // v4.1 优化: 小数据量直接 partial_sort
+    if (count < SMALL_N_THRESHOLD && k <= K_SMALL_THRESHOLD) {
+        topk_partial_sort_min(data, count, k, out_values, out_indices);
+        return;
+    }
+
+    // 大数据量 + 小 K → 采样预过滤
     if (count >= LARGE_N_THRESHOLD && k <= K_SMALL_THRESHOLD) {
         topk_sampled_prefilter_min(data, count, k, out_values, out_indices);
         return;
     }
 
+    // 中等数据量 (500K-1M) 使用堆方法
     if (k <= K_SMALL_THRESHOLD) {
         topk_heap_small_min(data, count, k, out_values, out_indices);
     }
