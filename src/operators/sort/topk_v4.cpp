@@ -142,7 +142,9 @@ void collect_candidates_max_simd(const int32_t* data, size_t count,
     size_t i = 0;
     for (; i + SIMD_BATCH <= count; i += SIMD_BATCH) {
         // 软件预取
-        __builtin_prefetch(data + i + 256, 0, 0);
+        // V9.1: 多级预取优化
+        __builtin_prefetch(data + i + 64, 0, 3);   // L1: 256B
+        __builtin_prefetch(data + i + 128, 0, 2);  // L2: 512B
 
         // 快速检查: 批次内是否有任何元素 > threshold
         bool has_candidate = false;
@@ -197,7 +199,9 @@ void collect_candidates_min_simd(const int32_t* data, size_t count,
 
     size_t i = 0;
     for (; i + SIMD_BATCH <= count; i += SIMD_BATCH) {
-        __builtin_prefetch(data + i + 256, 0, 0);
+        // V9.1: 多级预取优化
+        __builtin_prefetch(data + i + 64, 0, 3);   // L1: 256B
+        __builtin_prefetch(data + i + 128, 0, 2);  // L2: 512B
 
         bool has_candidate = false;
 
