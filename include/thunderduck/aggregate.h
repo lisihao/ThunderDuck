@@ -299,6 +299,45 @@ void group_count_v4_parallel(const uint32_t* groups, size_t count,
  */
 bool is_group_aggregate_v2_available();
 
+// ============================================================================
+// v6.0 优化版本 - V9.3 智能策略选择
+// ============================================================================
+
+/**
+ * 分组聚合策略版本
+ */
+enum class GroupAggregateVersion {
+    V4_SINGLE,    // CPU 单线程 (低开销，小数据)
+    V4_PARALLEL,  // CPU 多线程 (最佳通用性能)
+    V5_GPU,       // GPU 两阶段 (大数据高竞争)
+    AUTO          // 自动选择
+};
+
+/**
+ * 分组聚合策略配置
+ */
+struct GroupAggregateConfig {
+    GroupAggregateVersion version = GroupAggregateVersion::AUTO;
+    bool debug_log = false;  // 输出策略选择日志
+};
+
+/**
+ * 获取推荐的分组聚合策略
+ *
+ * 策略选择规则 (基于 M4 基准测试):
+ * - count < 100K: V4_SINGLE (线程启动开销 > 收益)
+ * - 100K ≤ count < 50M: V4_PARALLEL (最佳通用性能)
+ * - count ≥ 50M AND num_groups ≤ 32: V5_GPU (GPU 带宽优势)
+ * - 其他: V4_PARALLEL (默认最优)
+ */
+GroupAggregateVersion select_group_aggregate_strategy(
+    size_t count, size_t num_groups);
+
+/**
+ * 获取策略选择的原因 (调试用)
+ */
+const char* get_group_aggregate_strategy_reason();
+
 /**
  * v5.0 GPU 两阶段分组求和
  *
@@ -320,6 +359,30 @@ void group_min_i32_v5(const int32_t* values, const uint32_t* groups,
                        size_t count, size_t num_groups, int32_t* out_mins);
 
 void group_max_i32_v5(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int32_t* out_maxs);
+
+/**
+ * v6.0 智能策略分组求和
+ *
+ * 自动选择最优实现:
+ * - V4_SINGLE: CPU 单线程 (count < 100K)
+ * - V4_PARALLEL: CPU 多线程 (100K - 50M，或默认)
+ * - V5_GPU: GPU 两阶段 (count >= 50M, groups <= 32)
+ */
+void group_sum_i32_v6(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_sum_i32_v6_config(const int32_t* values, const uint32_t* groups,
+                              size_t count, size_t num_groups, int64_t* out_sums,
+                              const GroupAggregateConfig& config);
+
+void group_count_v6(const uint32_t* groups, size_t count,
+                     size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v6(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v6(const int32_t* values, const uint32_t* groups,
                        size_t count, size_t num_groups, int32_t* out_maxs);
 
 } // namespace aggregate
