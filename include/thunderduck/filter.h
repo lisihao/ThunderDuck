@@ -403,6 +403,42 @@ void* filter_cache_alloc(size_t size);
  */
 void filter_cache_free(void* ptr);
 
+// ============================================================================
+// 多线程并行版本 (10M+ 数据优化)
+// ============================================================================
+
+/**
+ * 多线程并行过滤 - 4 线程并行
+ *
+ * 当数据量 >= 1M 时自动启用多线程
+ * 预期: 10M 数据 2.6x → 4-5x vs DuckDB
+ */
+size_t filter_i32_parallel(const int32_t* input, size_t count,
+                            CompareOp op, int32_t value,
+                            uint32_t* out_indices);
+
+// ============================================================================
+// v15.0 优化版本 - 直接 SIMD 索引生成 (跳过位图中间层)
+// ============================================================================
+
+/**
+ * v15.0 直接索引生成过滤
+ *
+ * 优化特性:
+ * - 跳过位图中间层，直接生成索引
+ * - 使用 4-bit 掩码 LUT 压缩存储
+ * - 本地缓冲区批量写入减少内存延迟
+ * - 预期: 相比 V3 filter 3x+ 加速
+ */
+size_t filter_i32_v15(const int32_t* input, size_t count,
+                       CompareOp op, int32_t value,
+                       uint32_t* out_indices);
+
+/**
+ * 获取 V15 版本信息
+ */
+const char* get_filter_v15_version();
+
 } // namespace filter
 } // namespace thunderduck
 

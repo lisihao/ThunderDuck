@@ -769,6 +769,61 @@ size_t hash_join_i32_v14_config(const int32_t* build_keys, size_t build_count,
 
 const char* get_v14_version_info();
 
+// ============================================================================
+// V15 并行探测优化
+// ============================================================================
+
+/**
+ * V15 Hash Join - 并行探测 + 本地缓冲
+ *
+ * 优化特性:
+ * - 4 线程并行探测 probe 表
+ * - 每线程本地结果缓冲，无锁设计
+ * - 更激进的预取 (32 元素距离)
+ * - 分区 build 表提升缓存局部性
+ */
+size_t hash_join_i32_v15(const int32_t* build_keys, size_t build_count,
+                          const int32_t* probe_keys, size_t probe_count,
+                          uint32_t* out_build_indices, uint32_t* out_probe_indices,
+                          JoinResult* result);
+
+const char* get_hash_join_v15_version();
+
+// ============================================================================
+// GPU SEMI/ANTI Join
+// ============================================================================
+
+/**
+ * GPU SEMI Join - Metal 并行探测
+ *
+ * 优化特性:
+ * - GPU 每线程探测一个 probe 键
+ * - 原子计数器收集匹配结果
+ * - 数据量 >= 500K 时自动使用 GPU
+ *
+ * @param build_keys Build 表键数组
+ * @param build_count Build 表行数
+ * @param probe_keys Probe 表键数组
+ * @param probe_count Probe 表行数
+ * @param result 输出结果
+ * @return 匹配数量
+ */
+size_t semi_join_gpu(const int32_t* build_keys, size_t build_count,
+                      const int32_t* probe_keys, size_t probe_count,
+                      JoinResult* result);
+
+/**
+ * GPU ANTI Join
+ */
+size_t anti_join_gpu(const int32_t* build_keys, size_t build_count,
+                      const int32_t* probe_keys, size_t probe_count,
+                      JoinResult* result);
+
+/**
+ * 检查 GPU SEMI Join 是否可用
+ */
+bool is_semi_join_gpu_available();
+
 } // namespace join
 } // namespace thunderduck
 

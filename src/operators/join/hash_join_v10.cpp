@@ -51,8 +51,12 @@ inline uint32_t crc32_hash(int32_t key) {
 } // anonymous namespace
 
 // ============================================================================
-// V10 哈希表 (SEMI/ANTI 优化)
+// V10 优化哈希表 (基于 V3 SOA 布局，添加 SEMI/ANTI 优化)
 // ============================================================================
+
+constexpr size_t M4_CACHE_LINE = 128;
+constexpr size_t SIMD_BATCH_SIZE = 8;
+constexpr size_t PREFETCH_DISTANCE = 16;
 
 class HashTableV10 {
 public:
@@ -62,6 +66,7 @@ public:
         capacity_ = 16;
         while (capacity_ < count * 1.7) capacity_ *= 2;
         mask_ = capacity_ - 1;
+        size_ = count;
 
         keys_.resize(capacity_, EMPTY_KEY);
         row_indices_.resize(capacity_);
@@ -75,7 +80,150 @@ public:
         }
     }
 
-    // INNER JOIN
+#ifdef __aarch64__
+    // SIMD 批量探测 (来自 V3)
+    size_t probe_inner_simd(const int32_t* probe_keys, size_t probe_count,
+                            uint32_t* out_build, uint32_t* out_probe) const {
+        size_t match_count = 0;
+        size_t i = 0;
+
+        // 批量处理
+        for (; i + SIMD_BATCH_SIZE <= probe_count; i += SIMD_BATCH_SIZE) {
+            // 预取
+            if (i + PREFETCH_DISTANCE < probe_count) {
+                for (int p = 0; p < 4; ++p) {
+                    uint32_t h = crc32_hash(probe_keys[i + PREFETCH_DISTANCE + p]);
+                    __builtin_prefetch(&keys_[h & mask_], 0, 3);
+                }
+            }
+
+            // 批量哈希
+            alignas(32) uint32_t hashes[SIMD_BATCH_SIZE];
+            for (int j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                hashes[j] = crc32_hash(probe_keys[i + j]);
+            }
+
+            // 探测
+            for (size_t j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                int32_t key = probe_keys[i + j];
+                size_t idx = hashes[j] & mask_;
+                while (keys_[idx] != EMPTY_KEY) {
+                    if (keys_[idx] == key) {
+                        out_build[match_count] = row_indices_[idx];
+                        out_probe[match_count++] = static_cast<uint32_t>(i + j);
+                    }
+                    idx = (idx + 1) & mask_;
+                }
+            }
+        }
+
+        // 剩余
+        for (; i < probe_count; ++i) {
+            int32_t key = probe_keys[i];
+            size_t idx = crc32_hash(key) & mask_;
+            while (keys_[idx] != EMPTY_KEY) {
+                if (keys_[idx] == key) {
+                    out_build[match_count] = row_indices_[idx];
+                    out_probe[match_count++] = static_cast<uint32_t>(i);
+                }
+                idx = (idx + 1) & mask_;
+            }
+        }
+        return match_count;
+    }
+
+    // SEMI JOIN SIMD - 带预取 + 提前退出
+    size_t probe_semi_simd(const int32_t* probe_keys, size_t probe_count,
+                           uint32_t* out_probe) const {
+        size_t match_count = 0;
+        size_t i = 0;
+
+        for (; i + SIMD_BATCH_SIZE <= probe_count; i += SIMD_BATCH_SIZE) {
+            if (i + PREFETCH_DISTANCE < probe_count) {
+                for (int p = 0; p < 4; ++p) {
+                    uint32_t h = crc32_hash(probe_keys[i + PREFETCH_DISTANCE + p]);
+                    __builtin_prefetch(&keys_[h & mask_], 0, 3);
+                }
+            }
+
+            alignas(32) uint32_t hashes[SIMD_BATCH_SIZE];
+            for (int j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                hashes[j] = crc32_hash(probe_keys[i + j]);
+            }
+
+            for (size_t j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                int32_t key = probe_keys[i + j];
+                size_t idx = hashes[j] & mask_;
+                while (keys_[idx] != EMPTY_KEY) {
+                    if (keys_[idx] == key) {
+                        out_probe[match_count++] = static_cast<uint32_t>(i + j);
+                        break;  // SEMI: 提前退出
+                    }
+                    idx = (idx + 1) & mask_;
+                }
+            }
+        }
+
+        for (; i < probe_count; ++i) {
+            int32_t key = probe_keys[i];
+            size_t idx = crc32_hash(key) & mask_;
+            while (keys_[idx] != EMPTY_KEY) {
+                if (keys_[idx] == key) {
+                    out_probe[match_count++] = static_cast<uint32_t>(i);
+                    break;
+                }
+                idx = (idx + 1) & mask_;
+            }
+        }
+        return match_count;
+    }
+
+    // ANTI JOIN SIMD
+    size_t probe_anti_simd(const int32_t* probe_keys, size_t probe_count,
+                           uint32_t* out_probe) const {
+        size_t match_count = 0;
+        size_t i = 0;
+
+        for (; i + SIMD_BATCH_SIZE <= probe_count; i += SIMD_BATCH_SIZE) {
+            if (i + PREFETCH_DISTANCE < probe_count) {
+                for (int p = 0; p < 4; ++p) {
+                    uint32_t h = crc32_hash(probe_keys[i + PREFETCH_DISTANCE + p]);
+                    __builtin_prefetch(&keys_[h & mask_], 0, 3);
+                }
+            }
+
+            alignas(32) uint32_t hashes[SIMD_BATCH_SIZE];
+            for (int j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                hashes[j] = crc32_hash(probe_keys[i + j]);
+            }
+
+            for (size_t j = 0; j < SIMD_BATCH_SIZE; ++j) {
+                int32_t key = probe_keys[i + j];
+                size_t idx = hashes[j] & mask_;
+                bool found = false;
+                while (keys_[idx] != EMPTY_KEY) {
+                    if (keys_[idx] == key) { found = true; break; }
+                    idx = (idx + 1) & mask_;
+                }
+                if (!found) out_probe[match_count++] = static_cast<uint32_t>(i + j);
+            }
+        }
+
+        for (; i < probe_count; ++i) {
+            int32_t key = probe_keys[i];
+            size_t idx = crc32_hash(key) & mask_;
+            bool found = false;
+            while (keys_[idx] != EMPTY_KEY) {
+                if (keys_[idx] == key) { found = true; break; }
+                idx = (idx + 1) & mask_;
+            }
+            if (!found) out_probe[match_count++] = static_cast<uint32_t>(i);
+        }
+        return match_count;
+    }
+#endif
+
+    // 标量版本
     size_t probe_inner(const int32_t* probe_keys, size_t probe_count,
                        uint32_t* out_build, uint32_t* out_probe) const {
         size_t match_count = 0;
@@ -85,8 +233,7 @@ public:
             while (keys_[idx] != EMPTY_KEY) {
                 if (keys_[idx] == key) {
                     out_build[match_count] = row_indices_[idx];
-                    out_probe[match_count] = static_cast<uint32_t>(i);
-                    ++match_count;
+                    out_probe[match_count++] = static_cast<uint32_t>(i);
                 }
                 idx = (idx + 1) & mask_;
             }
@@ -94,7 +241,6 @@ public:
         return match_count;
     }
 
-    // SEMI JOIN - 优化: 找到即退出
     size_t probe_semi(const int32_t* probe_keys, size_t probe_count,
                       uint32_t* out_probe) const {
         size_t match_count = 0;
@@ -104,7 +250,7 @@ public:
             while (keys_[idx] != EMPTY_KEY) {
                 if (keys_[idx] == key) {
                     out_probe[match_count++] = static_cast<uint32_t>(i);
-                    break;  // 提前退出
+                    break;
                 }
                 idx = (idx + 1) & mask_;
             }
@@ -112,7 +258,6 @@ public:
         return match_count;
     }
 
-    // ANTI JOIN - 返回不匹配的
     size_t probe_anti(const int32_t* probe_keys, size_t probe_count,
                       uint32_t* out_probe) const {
         size_t match_count = 0;
@@ -130,13 +275,13 @@ public:
     }
 
 private:
-    std::vector<int32_t> keys_;
+    alignas(M4_CACHE_LINE) std::vector<int32_t> keys_;
     std::vector<uint32_t> row_indices_;
-    size_t capacity_ = 0, mask_ = 0;
+    size_t capacity_ = 0, mask_ = 0, size_ = 0;
 };
 
 // ============================================================================
-// V10 Hash Join
+// V10 Hash Join - 使用 V3 作为 INNER JOIN，V10 优化 SEMI/ANTI
 // ============================================================================
 
 size_t hash_join_i32_v10_config(const int32_t* build_keys, size_t build_count,
@@ -144,36 +289,53 @@ size_t hash_join_i32_v10_config(const int32_t* build_keys, size_t build_count,
                                  JoinType join_type, JoinResult* result,
                                  const JoinConfigV10& config) {
     if (!result) return 0;
-
-    HashTableV10 ht;
-    ht.build(build_keys, build_count);
-
-    size_t estimated = std::max(build_count, probe_count);
-    if (result->capacity < estimated) grow_join_result(result, estimated);
-
-    size_t match_count = 0;
-
-    switch (join_type) {
-        case JoinType::INNER:
-            match_count = ht.probe_inner(probe_keys, probe_count,
-                                         result->left_indices, result->right_indices);
-            break;
-        case JoinType::SEMI:
-            match_count = ht.probe_semi(probe_keys, probe_count, result->right_indices);
-            for (size_t i = 0; i < match_count; ++i) result->left_indices[i] = NULL_INDEX;
-            break;
-        case JoinType::ANTI:
-            match_count = ht.probe_anti(probe_keys, probe_count, result->right_indices);
-            for (size_t i = 0; i < match_count; ++i) result->left_indices[i] = NULL_INDEX;
-            break;
-        default:
-            // LEFT/RIGHT/FULL 委托给 v4
-            return hash_join_i32_v4(build_keys, build_count, probe_keys, probe_count,
-                                    join_type, result);
+    if (build_count == 0 || probe_count == 0) {
+        result->count = 0;
+        return 0;
     }
 
-    result->count = match_count;
-    return match_count;
+    // INNER JOIN: 委托给优化的 V3 实现
+    if (join_type == JoinType::INNER) {
+        return hash_join_i32_v3(build_keys, build_count, probe_keys, probe_count,
+                                join_type, result);
+    }
+
+    // SEMI/ANTI JOIN: 使用 V10 优化实现
+    if (join_type == JoinType::SEMI || join_type == JoinType::ANTI) {
+        HashTableV10 ht;
+        ht.build(build_keys, build_count);
+
+        size_t estimated = probe_count;
+        if (result->capacity < estimated) grow_join_result(result, estimated);
+
+        size_t match_count = 0;
+
+        if (join_type == JoinType::SEMI) {
+#ifdef __aarch64__
+            match_count = ht.probe_semi_simd(probe_keys, probe_count, result->right_indices);
+#else
+            match_count = ht.probe_semi(probe_keys, probe_count, result->right_indices);
+#endif
+        } else {  // ANTI
+#ifdef __aarch64__
+            match_count = ht.probe_anti_simd(probe_keys, probe_count, result->right_indices);
+#else
+            match_count = ht.probe_anti(probe_keys, probe_count, result->right_indices);
+#endif
+        }
+
+        // SEMI/ANTI 只返回 probe 索引
+        for (size_t i = 0; i < match_count; ++i) {
+            result->left_indices[i] = NULL_INDEX;
+        }
+
+        result->count = match_count;
+        return match_count;
+    }
+
+    // LEFT/RIGHT/FULL 委托给 v4
+    return hash_join_i32_v4(build_keys, build_count, probe_keys, probe_count,
+                            join_type, result);
 }
 
 size_t hash_join_i32_v10(const int32_t* build_keys, size_t build_count,

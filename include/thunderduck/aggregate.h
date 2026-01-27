@@ -509,6 +509,25 @@ void group_max_i32_v14(const int32_t* values, const uint32_t* groups,
 
 const char* get_group_aggregate_v14_version();
 
+// ============================================================================
+// V15 优化版本 - 8线程 + 8路展开 + 缓存优化
+// ============================================================================
+
+/**
+ * V15 分组聚合 - 深度优化版本
+ *
+ * 优化特性:
+ * - 8 线程并行（适配 M4 10 核）
+ * - 8 路循环展开减少循环开销
+ * - 缓存行对齐避免伪共享
+ * - 移除边界检查（假设输入合法）
+ * - 双级预取优化内存延迟
+ */
+void group_sum_i32_v15(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int64_t* out_sums);
+
+const char* get_group_aggregate_v15_version();
+
 } // namespace aggregate
 } // namespace thunderduck
 

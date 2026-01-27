@@ -315,29 +315,17 @@ using strategy::thresholds::FILTER_GPU_MIN;
 // 兼容性常量 - 用于非 config 版本的函数
 constexpr size_t GPU_THRESHOLD = FILTER_GPU_MIN;
 
-// 策略选择 - 使用自适应策略选择器
+// 策略选择 - 基于数据量和选择率
+// 基准测试结果:
+//   1M 数据: GPU 0.52x (慢) → 使用 CPU
+//   10M 数据: GPU 1.57x (快) → 使用 GPU
+// 交叉点约 5M
+constexpr size_t GPU_LARGE_DATA_THRESHOLD = 5000000;  // 5M
+
 FilterStrategy selectStrategy(size_t count, float selectivity_hint,
                                FilterStrategy requested, bool is_page_aligned) {
     if (requested != FilterStrategy::AUTO) {
         return requested;
-    }
-
-    // 使用自适应策略选择器
-    strategy::DataCharacteristics data_chars;
-    data_chars.row_count = count;
-    data_chars.column_count = 1;
-    data_chars.element_size = sizeof(int32_t);
-    data_chars.selectivity = selectivity_hint;
-    data_chars.cardinality_ratio = -1.0f;
-    data_chars.is_page_aligned = is_page_aligned;
-
-    auto executor = strategy::StrategySelector::instance().select(
-        strategy::OperatorType::FILTER, data_chars);
-
-    // GPU 不可用或策略选择 CPU
-    if (executor == strategy::Executor::CPU_SIMD ||
-        executor == strategy::Executor::CPU_SCALAR) {
-        return FilterStrategy::CPU_SIMD;
     }
 
     // GPU 可用性检查
@@ -346,19 +334,24 @@ FilterStrategy selectStrategy(size_t count, float selectivity_hint,
         return FilterStrategy::CPU_SIMD;
     }
 
-    // 选择率未知时，CPU 更稳定
-    if (selectivity_hint < 0) {
-        return FilterStrategy::CPU_SIMD;
-    }
-
-    // 根据选择率选择 GPU 策略
-    // 低选择率 (<10%): GPU 原子版高效
-    // 中高选择率 (>=10%): CPU 更优 (GPU 原子争用)
-    if (selectivity_hint < 0.1f) {
+    // 大数据量 (>=5M): 始终使用 GPU
+    // 原因: GPU 并行度优势超过原子争用开销
+    // 实测: 10M 数据 50% 选择率 GPU 仍达 1.57x vs DuckDB
+    if (count >= GPU_LARGE_DATA_THRESHOLD) {
         return FilterStrategy::GPU_ATOMIC;
     }
 
-    // 高选择率时 CPU 更高效
+    // 小数据量 (<5M): 基于选择率选择
+    // 低选择率 (<10%): GPU 原子版高效
+    // 中高选择率 (>=10%): CPU 更优 (GPU 启动开销)
+    if (selectivity_hint >= 0 && selectivity_hint < 0.1f) {
+        // 但数据量太小时 (< 1M) CPU 更快
+        if (count >= 1000000) {
+            return FilterStrategy::GPU_ATOMIC;
+        }
+    }
+
+    // 默认使用 CPU
     return FilterStrategy::CPU_SIMD;
 }
 

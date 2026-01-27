@@ -147,8 +147,8 @@ void print_result(const BenchResult& r) {
 // ============================================================================
 
 void benchmark_filter(const TestConfig& config) {
-    print_header("FILTER 算子测试");
-    std::cout << "等效 SQL: SELECT * FROM table WHERE value > 500000" << std::endl;
+    print_header("FILTER COUNT 算子测试 (仅计数)");
+    std::cout << "等效 SQL: SELECT COUNT(*) FROM table WHERE value > 500000" << std::endl;
     std::cout << "数据量: " << config.filter_count / 1000000 << "M 行 × 4 bytes = "
               << (config.filter_count * 4) / (1024*1024) << " MB" << std::endl;
     std::cout << std::endl;
@@ -163,14 +163,13 @@ void benchmark_filter(const TestConfig& config) {
     size_t data_bytes = config.filter_count * sizeof(int32_t);
     std::vector<BenchResult> results;
 
-    // DuckDB 基准
+    // DuckDB 基准 (COUNT)
     double duckdb_time = 0;
     size_t duckdb_count = 0;
     {
         duckdb::DuckDB db(nullptr);
         duckdb::Connection con(db);
 
-        // 创建表并插入数据
         con.Query("CREATE TABLE test (value INTEGER)");
         {
             duckdb::Appender appender(con, "test");
@@ -184,47 +183,169 @@ void benchmark_filter(const TestConfig& config) {
             duckdb_count = result->GetValue(0, 0).GetValue<int64_t>();
         }, config.iterations);
 
-        results.push_back({"DuckDB", "CPU", duckdb_time,
+        results.push_back({"DuckDB COUNT", "CPU", duckdb_time,
                           data_bytes / (duckdb_time * 1e6), 1.0, 0, true});
     }
 
-    // V3 基准
-    double v3_time = 0;
-    size_t v3_count = 0;
+    // V1 count 基础版本
+    double v1_time = 0;
     {
-        std::vector<uint32_t> indices(config.filter_count);
-        v3_time = measure_median([&]() {
-            v3_count = filter::filter_i32(data.data(), config.filter_count,
-                                           filter::CompareOp::GT, threshold, indices.data());
+        size_t cnt = 0;
+        v1_time = measure_median([&]() {
+            cnt = filter::count_i32(data.data(), config.filter_count,
+                                    filter::CompareOp::GT, threshold);
         }, config.iterations);
-        results.push_back({"V3 SIMD", "CPU", v3_time,
-                          data_bytes / (v3_time * 1e6),
-                          duckdb_time / v3_time, 1.0,
-                          v3_count == duckdb_count});
+        results.push_back({"V1 count", "CPU", v1_time,
+                          data_bytes / (v1_time * 1e6),
+                          duckdb_time / v1_time, 1.0,
+                          cnt == duckdb_count});
     }
 
-    // V6 预取优化
+    // V2 count 优化版本
     {
-        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
         double time = measure_median([&]() {
-            filter::filter_i32_v6(data.data(), config.filter_count,
-                                   filter::CompareOp::GT, threshold, indices.data());
+            cnt = filter::count_i32_v2(data.data(), config.filter_count,
+                                        filter::CompareOp::GT, threshold);
         }, config.iterations);
-        results.push_back({"V6 Prefetch", "CPU", time,
+        results.push_back({"V2 count", "CPU", time,
                           data_bytes / (time * 1e6),
-                          duckdb_time / time, v3_time / time, true});
+                          duckdb_time / time, v1_time / time,
+                          cnt == duckdb_count});
     }
 
-    // V8 Parallel
+    // V3 count ILP优化 (历史最优)
+    double v3_count_time = 0;
+    {
+        size_t cnt = 0;
+        v3_count_time = measure_median([&]() {
+            cnt = filter::count_i32_v3(data.data(), config.filter_count,
+                                        filter::CompareOp::GT, threshold);
+        }, config.iterations);
+        results.push_back({"V3 count ILP", "CPU", v3_count_time,
+                          data_bytes / (v3_count_time * 1e6),
+                          duckdb_time / v3_count_time, v1_time / v3_count_time,
+                          cnt == duckdb_count});
+    }
+
+    // V6 count 多级预取
+    {
+        size_t cnt = 0;
+        double time = measure_median([&]() {
+            cnt = filter::count_i32_v6(data.data(), config.filter_count,
+                                        filter::CompareOp::GT, threshold);
+        }, config.iterations);
+        results.push_back({"V6 count预取", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v1_time / time,
+                          cnt == duckdb_count});
+    }
+
+    print_table_header();
+    for (const auto& r : results) print_result(r);
+
+    // === Filter 输出索引测试 ===
+    std::cout << std::endl;
+    print_header("FILTER 输出索引测试");
+    std::cout << "等效 SQL: SELECT * FROM table WHERE value > 500000 (返回所有匹配行)" << std::endl;
+    std::cout << std::endl;
+
+    results.clear();
+    results.push_back({"DuckDB COUNT", "CPU", duckdb_time,
+                      data_bytes / (duckdb_time * 1e6), 1.0, 0, true});
+
+    // V1 filter 基础版本
+    double v1_filter_time = 0;
     {
         std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        v1_filter_time = measure_median([&]() {
+            cnt = filter::filter_i32(data.data(), config.filter_count,
+                                      filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V1 filter", "CPU", v1_filter_time,
+                          data_bytes / (v1_filter_time * 1e6),
+                          duckdb_time / v1_filter_time, 1.0,
+                          cnt == duckdb_count});
+    }
+
+    // V2 filter 位图优化
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
         double time = measure_median([&]() {
-            filter::filter_i32_parallel(data.data(), config.filter_count,
-                                        filter::CompareOp::GT, threshold, indices.data());
+            cnt = filter::filter_i32_v2(data.data(), config.filter_count,
+                                         filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V2 filter", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v1_filter_time / time, cnt == duckdb_count});
+    }
+
+    // V3 filter 模板特化+4累加器 (历史最优)
+    double v3_filter_time = 0;
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        v3_filter_time = measure_median([&]() {
+            cnt = filter::filter_i32_v3(data.data(), config.filter_count,
+                                         filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V3 filter ILP", "CPU", v3_filter_time,
+                          data_bytes / (v3_filter_time * 1e6),
+                          duckdb_time / v3_filter_time, v1_filter_time / v3_filter_time, cnt == duckdb_count});
+    }
+
+    // V5 filter 缓存对齐
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        double time = measure_median([&]() {
+            cnt = filter::filter_i32_v5(data.data(), config.filter_count,
+                                         filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V5 filter", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v1_filter_time / time, cnt == duckdb_count});
+    }
+
+    // V6 filter 多级预取
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        double time = measure_median([&]() {
+            cnt = filter::filter_i32_v6(data.data(), config.filter_count,
+                                         filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V6 filter", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v1_filter_time / time, cnt == duckdb_count});
+    }
+
+    // V8 filter Parallel 多线程
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        double time = measure_median([&]() {
+            cnt = filter::filter_i32_parallel(data.data(), config.filter_count,
+                                               filter::CompareOp::GT, threshold, indices.data());
         }, config.iterations);
         results.push_back({"V8 Parallel", "CPU", time,
                           data_bytes / (time * 1e6),
-                          duckdb_time / time, v3_time / time, true});
+                          duckdb_time / time, v1_filter_time / time, cnt == duckdb_count});
+    }
+
+    // V15 直接索引生成 (新优化)
+    {
+        std::vector<uint32_t> indices(config.filter_count);
+        size_t cnt = 0;
+        double time = measure_median([&]() {
+            cnt = filter::filter_i32_v15(data.data(), config.filter_count,
+                                          filter::CompareOp::GT, threshold, indices.data());
+        }, config.iterations);
+        results.push_back({"V15 Direct", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v1_filter_time / time, cnt == duckdb_count});
     }
 
     print_table_header();
@@ -436,6 +557,20 @@ void benchmark_group_by(const TestConfig& config) {
                           sums == duckdb_sums});
     }
 
+    // V15 优化版 (8线程 + 8路展开)
+    {
+        std::vector<int64_t> sums(config.group_by_groups);
+        double time = measure_median([&]() {
+            aggregate::group_sum_i32_v15(values.data(), groups.data(),
+                                         config.group_by_count, config.group_by_groups,
+                                         sums.data());
+        }, config.iterations);
+        results.push_back({"V15 8线程", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v3_time / time,
+                          sums == duckdb_sums});
+    }
+
     print_table_header();
     for (const auto& r : results) print_result(r);
 }
@@ -577,6 +712,22 @@ void benchmark_hash_join(const TestConfig& config) {
                           duckdb_time / time, v3_time / time,
                           result->count == duckdb_count});
         join::free_join_result(result);
+    }
+
+    // V15 并行探测
+    {
+        std::vector<uint32_t> out_build(config.join_probe_count * 2);
+        std::vector<uint32_t> out_probe(config.join_probe_count * 2);
+        size_t v15_count = 0;
+        double time = measure_median([&]() {
+            v15_count = join::hash_join_i32_v15(build_keys.data(), config.join_build_count,
+                                                 probe_keys.data(), config.join_probe_count,
+                                                 out_build.data(), out_probe.data(), nullptr);
+        }, config.iterations);
+        results.push_back({"V15 并行", "CPU", time,
+                          data_bytes / (time * 1e6),
+                          duckdb_time / time, v3_time / time,
+                          v15_count == duckdb_count});
     }
 
     print_table_header();

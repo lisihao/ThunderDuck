@@ -345,6 +345,30 @@ void topk_max_i32_v6_config(const int32_t* data, size_t count, size_t k,
 void topk_min_i32_v6(const int32_t* data, size_t count, size_t k,
                      int32_t* out_values, uint32_t* out_indices = nullptr);
 
+// ============================================================================
+// V13 GPU TopK - P3 优化
+// ============================================================================
+
+/**
+ * 检查 V13 GPU TopK 是否可用
+ */
+bool is_topk_v13_gpu_available();
+
+/**
+ * V13 GPU TopK Max - 并行选择算法
+ *
+ * 算法: 分层选择 + Bitonic Sort
+ * - Phase 1: 每个 threadgroup 找本地 TopK
+ * - Phase 2: 合并所有 threadgroup 结果
+ *
+ * 目标: CPU 4x → GPU 5x+
+ */
+void topk_max_i32_v13(const int32_t* data, size_t count, size_t k,
+                       int32_t* out_values, uint32_t* out_indices = nullptr);
+
+void topk_min_i32_v13(const int32_t* data, size_t count, size_t k,
+                       int32_t* out_values, uint32_t* out_indices = nullptr);
+
 } // namespace sort
 } // namespace thunderduck
 
