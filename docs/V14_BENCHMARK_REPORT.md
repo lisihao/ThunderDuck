@@ -1,231 +1,250 @@
-# ThunderDuck V14 全面性能基准测试报告
+# ThunderDuck V14 全面性能基准报告
 
-> **版本**: 14.0 | **日期**: 2026-01-27 | **标签**: 新性能基线
+> **测试日期**: 2026-01-27
+> **平台**: Apple M4 Max (10核 CPU, 40核 GPU)
+> **测试配置**: iterations=15, warmup=2, IQR异常值剔除
+> **版本标签**: v14.0 - 新性能基线
 
-## 一、测试环境
+## 一、执行摘要
 
-| 项目 | 配置 |
-|------|------|
-| 平台 | Apple Silicon M4 |
-| 系统 | macOS 15.x |
-| 编译器 | clang++ (Apple LLVM) |
-| 优化 | -O3 -mcpu=native -march=armv8-a+crc |
-| 对比版本 | DuckDB (原版), ThunderDuck V3-V14 |
+本报告测试了 ThunderDuck V14 各算子版本与 DuckDB 的性能对比，覆盖 Filter、GROUP BY、JOIN、TopK 四大核心算子。
 
-## 二、测试数据规模
+### 性能总览
 
-| 算子 | 数据量 | 说明 |
-|------|--------|------|
-| Filter | 10M 行 × 4 bytes = 38 MB | WHERE value > 500000 |
-| Aggregate | 10M 行 × 4 bytes = 38 MB | SUM(value) |
-| GROUP BY | 10M 行 × 8 bytes = 76 MB | 1000 分组 |
-| Hash Join | 100K × 1M = 4.4 MB | 100% 匹配率 |
-| TopK | 10M 行 × 4 bytes = 38 MB | Top 100 |
+| 算子 | 数据量 | 最佳版本 | 设备 | vs DuckDB | 状态 |
+|------|--------|----------|------|-----------|------|
+| **Filter** | 1M | V6 (prefetch) | CPU SIMD | 0.80x | **需优化** |
+| **Filter** | 10M | V4 (AUTO) | GPU | 0.62x | **需优化** |
+| **GROUP BY SUM** | 10M | V15 (8T+展开) | CPU 8T | **2.79x** | 优秀 |
+| **INNER JOIN** | 1M probe | V10 | CPU SIMD | **1.52x** | 良好 |
+| **SEMI JOIN** | 1M probe | GPU (Metal) | Metal | **2.28x** | 优秀 |
+| **TopK** | 10M | V5 (count) | CPU | **4.65x** | 优秀 |
 
-## 三、性能测试结果
+---
 
-### 3.1 Filter 算子
+## 二、详细测试结果
 
-**等效 SQL**: `SELECT * FROM table WHERE value > 500000`
+### 2.1 Filter 算子
 
-| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 状态 |
-|------|------|----------|------------|-----------|-------|------|
-| DuckDB | CPU | 1.561 | 25.62 | 1.00x | - | **基准** |
-| V3 SIMD | CPU | 18.022 | 2.22 | 0.09x | 1.00x | 慢 |
-| V6 Prefetch | CPU | 3.974 | 10.07 | 0.39x | 4.53x | 慢 |
-| V8 Parallel | CPU | 5.925 | 6.75 | 0.26x | 3.04x | 慢 |
+**等效 SQL**: `SELECT * FROM t WHERE value > 500000`
+**选择率**: ~50%
 
-**分析**: Filter 算子全面落后于 DuckDB，需要重点优化。V3 基础版本存在严重性能问题。
+#### 1M 数据量测试
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 正确性 |
+|------|------|----------|------------|-----------|-------|--------|
+| DuckDB | CPU | 0.304 | 13.18 | 1.00x | - | PASS |
+| V3 (bitmap) | CPU SIMD | 0.409 | 9.77 | 0.74x | 1.00x | PASS |
+| V5 (LUT) | CPU SIMD | 0.380 | 10.53 | **0.80x** | 1.07x | PASS |
+| V6 (prefetch) | CPU SIMD | 0.380 | 10.54 | **0.80x** | 1.07x | PASS |
+| V15 (direct) | CPU SIMD | 0.401 | 9.96 | 0.76x | 1.01x | PASS |
+| V4 (AUTO) | CPU Auto | 0.385 | 10.39 | 0.79x | 1.06x | PASS |
+| Parallel (4T) | CPU 4T | 1.007 | 3.97 | 0.30x | 0.40x | PASS |
+
+#### 10M 数据量测试
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 正确性 |
+|------|------|----------|------------|-----------|-------|--------|
+| DuckDB | CPU | 1.391 | 28.76 | 1.00x | - | PASS |
+| V3 (bitmap) | CPU SIMD | 3.923 | 10.20 | 0.35x | 1.00x | PASS |
+| V5 (LUT) | CPU SIMD | 3.885 | 10.30 | 0.36x | 1.01x | PASS |
+| V6 (prefetch) | CPU SIMD | 3.978 | 10.05 | 0.35x | 0.98x | PASS |
+| V15 (direct) | CPU SIMD | 3.450 | 11.60 | 0.40x | 1.13x | PASS |
+| **V4 (AUTO)** | **GPU** | **2.231** | **17.93** | **0.62x** | **1.75x** | PASS |
+| Parallel (4T) | CPU 4T | 6.630 | 6.03 | 0.21x | 0.59x | PASS |
+
+**分析**:
+- DuckDB 在 Filter 上表现极强 (10M 达到 28.76 GB/s)
+- 可能原因: DuckDB 使用向量化执行引擎 + 高效的选择向量
+- ThunderDuck GPU 版本 (V4 AUTO) 相比 CPU 版本快 1.75x，但仍不及 DuckDB
+
+---
+
+### 2.2 GROUP BY SUM 算子
+
+**等效 SQL**: `SELECT group_id, SUM(value) FROM t GROUP BY group_id`
+**数据量**: 10M 行
+**分组数**: 1000
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V4-single | 正确性 |
+|------|------|----------|------------|-----------|--------------|--------|
+| DuckDB | CPU | 2.675 | 29.91 | 1.00x | - | PASS |
+| V4 (single) | CPU SIMD | 2.817 | 28.40 | 0.95x | 1.00x | PASS |
+| V4 (parallel) | CPU 4T | 1.204 | 66.46 | **2.22x** | 2.34x | PASS |
+| V6 (smart) | CPU/GPU Auto | 1.509 | 53.00 | 1.77x | 1.86x | PASS |
+| V14 (parallel) | CPU 8T | 1.079 | 74.12 | **2.48x** | 2.61x | PASS |
+| **V15 (8T+展开)** | **CPU 8T** | **0.958** | **83.50** | **2.79x** | **2.94x** | PASS |
+
+**分析**:
+- GROUP BY 是 ThunderDuck 的强项
+- V15 达到 83.50 GB/s 带宽，相比 DuckDB 快 2.79x
+- 多线程并行 (8T) 相比单线程快 2.94x
+
+---
+
+### 2.3 INNER JOIN 算子
+
+**等效 SQL**: `SELECT * FROM build_t JOIN probe_t ON build_t.key = probe_t.key`
+**Build**: 100K 唯一键
+**Probe**: 1M 随机键 (~10% 匹配率)
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 正确性 |
+|------|------|----------|------------|-----------|-------|--------|
+| DuckDB | CPU | 1.953 | 2.25 | 1.00x | - | PASS |
+| V3 | CPU SIMD | 1.374 | 3.20 | **1.42x** | 1.00x | PASS |
+| V6 (prefetch) | CPU SIMD | 1.370 | 3.21 | **1.43x** | 1.00x | PASS |
+| **V10** | **CPU SIMD** | **1.282** | **3.43** | **1.52x** | **1.07x** | PASS |
+| V11 (SIMD probe) | CPU SIMD | 3.434 | 1.28 | 0.57x | 0.40x | PASS |
+| V13 (两阶段) | CPU SIMD | 19.212 | 0.23 | 0.10x | 0.07x | PASS |
+| V14 (预分配) | CPU SIMD | 1.338 | 3.29 | 1.46x | 1.02x | PASS |
+
+**分析**:
+- V10 是 INNER JOIN 最佳版本，达到 1.52x vs DuckDB
+- V11 和 V13 有性能回退，需要进一步调查
+- V3/V6/V10/V14 都超过 DuckDB
+
+---
+
+### 2.4 SEMI JOIN 算子
+
+**等效 SQL**: `SELECT * FROM probe_t WHERE EXISTS (SELECT 1 FROM build_t WHERE build_t.key = probe_t.key)`
+**Build**: 100K 唯一键
+**Probe**: 1M 随机键
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V10 | 正确性 |
+|------|------|----------|------------|-----------|--------|--------|
+| DuckDB | CPU | 3.234 | 1.36 | 1.00x | - | PASS |
+| V10 | CPU SIMD | 3.580 | 1.23 | 0.90x | 1.00x | PASS |
+| **GPU (Metal)** | **Metal** | **1.421** | **3.10** | **2.28x** | **2.52x** | PASS |
+
+**分析**:
+- GPU SEMI Join 是本次优化的亮点
+- Metal GPU 版本达到 2.28x vs DuckDB，2.52x vs V10 CPU
+- CPU V10 稍慢于 DuckDB (0.90x)
+
+---
+
+### 2.5 TopK 算子
+
+**等效 SQL**: `SELECT * FROM t ORDER BY value DESC LIMIT 10`
+**数据量**: 10M
+**K**: 10
+
+| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 正确性 |
+|------|------|----------|------------|-----------|-------|--------|
+| DuckDB | CPU | 2.528 | 15.82 | 1.00x | - | PASS |
+| V3 (adaptive) | CPU | 4.685 | 8.54 | 0.54x | 1.00x | PASS |
+| V4 (sample) | CPU SIMD | 0.566 | 70.71 | **4.47x** | 8.28x | PASS |
+| **V5 (count)** | **CPU** | **0.543** | **73.63** | **4.65x** | **8.62x** | PASS |
+| V6 (UMA) | CPU/GPU Auto | 0.618 | 64.72 | 4.09x | 7.57x | PASS |
+
+**分析**:
+- TopK 是 ThunderDuck 最强算子
+- V5 采样预过滤 + 计数方法达到 4.65x vs DuckDB
+- 带宽达到 73.63 GB/s，接近内存带宽极限
+
+---
+
+## 三、综合性能矩阵
+
+### 所有算子版本性能对比 (vs DuckDB)
+
+| 算子 | V3 | V4 | V5 | V6 | V10 | V11 | V13 | V14 | V15 | GPU |
+|------|-----|-----|-----|-----|------|------|------|------|------|-----|
+| Filter 1M | 0.74x | 0.79x | 0.80x | 0.80x | - | - | - | - | 0.76x | - |
+| Filter 10M | 0.35x | 0.62x | 0.36x | 0.35x | - | - | - | - | 0.40x | 0.62x |
+| GROUP BY | - | 0.95x | - | 1.77x | - | - | - | 2.48x | **2.79x** | - |
+| INNER JOIN | **1.42x** | - | - | **1.43x** | **1.52x** | 0.57x | 0.10x | **1.46x** | - | - |
+| SEMI JOIN | - | - | - | - | 0.90x | - | - | - | - | **2.28x** |
+| TopK | 0.54x | **4.47x** | **4.65x** | **4.09x** | - | - | - | - | - | - |
+
+**图例**:
+- **加粗** = 超过 DuckDB (> 1.0x)
+- 普通 = 低于 DuckDB (< 1.0x)
+
+---
+
+## 四、优化建议
+
+### 高优先级优化点
+
+#### 1. Filter 算子 (急需优化)
+
+**现状**: 所有版本都低于 DuckDB (最佳 0.80x)
+
+**根因分析**:
+- DuckDB 使用向量化执行引擎，选择向量避免了数据拷贝
+- ThunderDuck 需要写出索引数组，有额外内存带宽开销
+- DuckDB 可能使用了更高效的分支预测
 
 **优化方向**:
-- 检查 V3 SIMD 实现是否有效启用 SIMD
-- 分析内存访问模式，优化预取策略
-- 考虑使用 DuckDB 类似的向量化执行模型
+1. **选择向量模式**: 返回位图而非索引数组
+2. **批量写入优化**: 使用 NEON vst1q 批量存储
+3. **GPU 优化**: 提升 GPU kernel 利用率
+4. **预取距离调优**: 针对 M4 缓存特性调优
 
-### 3.2 Aggregate 算子 (SUM)
+#### 2. SEMI JOIN CPU 版本 (V10)
 
-**等效 SQL**: `SELECT SUM(value) FROM table`
+**现状**: 0.90x vs DuckDB
 
-| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 状态 |
-|------|------|----------|------------|-----------|-------|------|
-| DuckDB | CPU | 1.664 | 24.03 | 1.00x | - | 基准 |
-| V3 SIMD | CPU | 1.123 | 35.63 | 1.48x | 1.00x | 好 |
-| **V7 Optimized** | CPU | **0.478** | **83.67** | **3.48x** | 2.35x | **最优** |
-| V8 Parallel | CPU | 0.522 | 76.68 | 3.19x | 2.15x | 好 |
+**优化方向**:
+1. 已有 GPU 版本 (2.28x)，考虑降低 GPU 启用阈值
+2. CPU 版本尝试 Bloom Filter 预过滤
 
-**分析**: V7 Optimized 达到 3.48x 加速比，性能优异。
+### 中优先级
 
-**关键优化**:
-- 8 路累加器消除依赖链
-- 256 元素批次减少归约次数
-- 自适应预取策略
+#### 3. INNER JOIN V11/V13 性能回退
 
-### 3.3 GROUP BY 算子
+**现状**: V11 (0.57x), V13 (0.10x) 大幅低于 V3/V10
 
-**等效 SQL**: `SELECT group_id, SUM(value) FROM table GROUP BY group_id`
+**根因分析**:
+- V11 SIMD 并行槽位比较可能引入额外开销
+- V13 两阶段算法可能在小数据集上开销过大
 
-| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 状态 |
-|------|------|----------|------------|-----------|-------|------|
-| DuckDB | CPU | 2.648 | 30.21 | 1.00x | - | 基准 |
-| V3 Basic | CPU | 2.877 | 27.81 | 0.92x | 1.00x | 慢 |
-| V7 SIMD | CPU | 2.801 | 28.56 | 0.95x | 1.03x | 慢 |
-| V8 Parallel | CPU | 1.190 | 67.22 | 2.23x | 2.42x | 好 |
-| V9 GPU | GPU | 3.131 | 25.55 | 0.85x | 0.92x | 慢 |
-| **V14 SIMD合并** | CPU | **1.074** | **74.48** | **2.47x** | 2.68x | **最优** |
+**建议**:
+- 清理或禁用 V11/V13，保留 V10 作为默认版本
+- 或添加数据量阈值选择策略
 
-**分析**: V14 SIMD 合并版本是当前最优，达到 2.47x 加速比。
+### 低优先级
 
-**V14 优化要点**:
-- 4 线程并行分区累加
-- SIMD 向量化合并线程结果
-- 4 路循环展开 + 预取
+#### 4. GROUP BY 进一步优化
 
-**GPU 版本分析**: V9 GPU 出现反向加速 (0.85x)，原因是 1000 分组 × 40 threadgroups = 40K 次全局原子操作竞争。
+**现状**: V15 已达到 2.79x，表现优异
 
-### 3.4 Hash Join 算子
+**潜在优化**:
+- GPU 加速 (适合超大数据集 > 100M)
+- 低基数优化 (分组数 < 100)
 
-**等效 SQL**: `SELECT * FROM build JOIN probe ON build.key = probe.key`
+---
 
-| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 状态 |
-|------|------|----------|------------|-----------|-------|------|
-| DuckDB | CPU | 1.727 | 2.55 | 1.00x | - | 基准 |
-| V3 Radix16 | CPU | 0.962 | 4.57 | 1.80x | 1.00x | 好 |
-| V10 Optimized | CPU | 0.982 | 4.48 | 1.76x | 0.98x | 好 |
-| V11 SIMD | CPU | 3.370 | 1.31 | 0.51x | 0.29x | **问题** |
-| V13 TwoPhase | CPU | 8.954 | 0.49 | 0.19x | 0.11x | **问题** |
-| **V14 Best** | CPU | **0.956** | **4.60** | **1.81x** | 1.01x | **最优** |
+## 五、版本演进历史
 
-**分析**: V14 委托 V3 实现，达到 1.81x 加速比。
+| 版本 | 发布日期 | 主要优化 | 关键性能提升 |
+|------|----------|----------|-------------|
+| V3 | - | 基础 SIMD | 基准版本 |
+| V4 | - | GPU Filter | Filter GPU 1.75x vs CPU |
+| V5 | - | TopK 采样 | TopK 4.65x vs DuckDB |
+| V6 | - | 预取优化 | Join 1.43x vs DuckDB |
+| V10 | - | 完整语义 | SEMI/ANTI Join 支持 |
+| V14 | 2026-01-27 | GPU SEMI Join | **SEMI Join 2.28x vs DuckDB** |
+| V15 | 2026-01-27 | 8T并行+展开 | **GROUP BY 2.79x vs DuckDB** |
 
-**V11/V13 问题分析**:
-- V11 SIMD: 负载因子 3.0x 导致每分区 18-20KB，超出 L1 缓存
-- V13 TwoPhase: 两阶段计数遍历开销 > 预分配收益
+---
 
-**经验教训**:
-1. 更大的 SIMD 向量并不总是更快
-2. 两阶段算法需要仔细评估额外遍历开销
+## 六、结论
 
-### 3.5 TopK 算子
+### 优势领域
+1. **GROUP BY SUM**: V15 达到 2.79x vs DuckDB
+2. **SEMI JOIN GPU**: 2.28x vs DuckDB
+3. **TopK**: V5 达到 4.65x vs DuckDB
+4. **INNER JOIN**: V10 达到 1.52x vs DuckDB
 
-**等效 SQL**: `SELECT * FROM table ORDER BY value DESC LIMIT 100`
+### 待改进领域
+1. **Filter**: 所有版本都低于 DuckDB (最佳 0.80x)
+2. **SEMI JOIN CPU**: 0.90x vs DuckDB
+3. **JOIN V11/V13**: 性能回退严重
 
-| 版本 | 设备 | 时间(ms) | 带宽(GB/s) | vs DuckDB | vs V3 | 状态 |
-|------|------|----------|------------|-----------|-------|------|
-| DuckDB | CPU | 3.041 | 13.15 | 1.00x | - | 基准 |
-| V3 HeapSort | CPU | 4.733 | 8.45 | 0.64x | 1.00x | 慢 |
-| **V5 Sampling** | CPU | **0.505** | **79.19** | **6.02x** | 9.37x | **最优** |
-| V6 Adaptive | CPU | 0.528 | 75.70 | 5.76x | 8.96x | 好 |
-
-**分析**: V5 Sampling 达到 6.02x 加速比，性能卓越。
-
-**V5 采样优化原理**:
-- 采样估计第 K 大元素阈值
-- 单遍扫描过滤候选集
-- 小数据集快速排序
-
-## 四、性能总览
-
-### 4.1 各算子最优实现
-
-| 算子 | 最优版本 | vs DuckDB | 优先级 |
-|------|----------|-----------|--------|
-| Filter | V6 Prefetch | 0.39x | ★★★ **高** |
-| Aggregate | V7 Optimized | 3.48x | ★ 低 |
-| GROUP BY | V14 SIMD合并 | 2.47x | ★★ 中 |
-| Hash Join | V14 Best (V3) | 1.81x | ★★ 中 |
-| TopK | V5 Sampling | 6.02x | ★ 低 |
-
-### 4.2 优化建议
-
-#### 高优先级 (Filter)
-
-Filter 是当前最大的性能瓶颈，所有版本都慢于 DuckDB。
-
-建议:
-1. **分析 DuckDB Filter 实现**: 研究其向量化执行模型
-2. **批量索引生成**: 考虑使用位图中间表示
-3. **分支预测优化**: 使用无分支 SIMD 选择
-
-#### 中优先级 (GROUP BY, Hash Join)
-
-GROUP BY 和 Hash Join 已有 1.8x-2.5x 加速，但仍有提升空间。
-
-建议:
-1. **Hash Join**: 探索 Robin-Hood 哈希减少最坏情况
-2. **GROUP BY**: 针对低基数场景优化
-
-#### 低优先级 (Aggregate, TopK)
-
-已达到 3.5x-6x 加速，性能优异。
-
-## 五、数据吞吐带宽分析
-
-| 算子 | DuckDB | ThunderDuck | 提升 |
-|------|--------|-------------|------|
-| Filter | 25.62 GB/s | 10.07 GB/s | -61% |
-| Aggregate | 24.03 GB/s | 83.67 GB/s | +248% |
-| GROUP BY | 30.21 GB/s | 74.48 GB/s | +147% |
-| Hash Join | 2.55 GB/s | 4.60 GB/s | +80% |
-| TopK | 13.15 GB/s | 79.19 GB/s | +502% |
-
-## 六、V14 架构决策
-
-基于测试结果，V14 采用以下架构:
-
-### 6.1 Hash Join V14
-
-```cpp
-// 委托给已验证最优的实现
-if (join_type == JoinType::SEMI || join_type == JoinType::ANTI) {
-    return hash_join_i32_v10(...)  // SEMI/ANTI 提前退出优化
-}
-return hash_join_i32_v3(...)       // INNER JOIN: Radix16 分区
-```
-
-### 6.2 GROUP BY V14
-
-```cpp
-// 多线程并行 + SIMD 合并
-1. 4 线程分区，每线程独立累加器
-2. SIMD 向量化合并: vaddq_s64
-3. 4 路循环展开 + 预取
-```
-
-## 七、下一步计划
-
-1. **Filter 算子重写** (高优先级)
-   - 分析 DuckDB 向量化执行模型
-   - 实现批量位图过滤
-   - 基准测试目标: 2x vs DuckDB
-
-2. **Hash Join 优化** (中优先级)
-   - Robin-Hood 哈希集成
-   - 更小分区探索
-
-3. **GPU 利用率提升** (低优先级)
-   - GROUP BY GPU: 减少原子操作竞争
-   - 考虑分层聚合
-
-## 八、附录
-
-### 测试命令
-
-```bash
-# 编译
-make clean && make lib
-
-# 运行完整测试
-make v14-full
-
-# 运行快速测试 (1M 数据)
-./build/v14_comprehensive_benchmark --small
-```
-
-### 关键文件
-
-| 文件 | 说明 |
-|------|------|
-| `src/operators/join/hash_join_v14.cpp` | V14 Hash Join |
-| `src/operators/aggregate/group_aggregate_v14.cpp` | V14 GROUP BY |
-| `include/thunderduck/v14.h` | V14 统一接口 |
-| `benchmark/v14_comprehensive_benchmark.cpp` | 基准测试程序 |
+### 下一步计划
+1. 优化 Filter 算子 (目标: 1.2x vs DuckDB)
+2. 清理 JOIN V11/V13 冗余代码
+3. 添加更多 GPU 加速算子
