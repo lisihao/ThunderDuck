@@ -458,6 +458,32 @@ bool is_uma_gpu_ready();
 } // namespace uma
 
 // ============================================================================
+// v6.0 超激进预取版本 - 超越 DuckDB
+// ============================================================================
+
+/**
+ * V6 Hash Join - 超激进预取优化
+ *
+ * 优化特性:
+ * - 自适应策略: 小表跳过分区，直接 Join
+ * - 三级预取: L2(远) -> L1(近) -> 当前
+ * - 8 路批量哈希
+ * - 低负载因子哈希表 (0.5) 减少冲突
+ *
+ * 目标: 超越 DuckDB 的 Hash Join 性能
+ */
+size_t hash_join_i32_v6(const int32_t* build_keys, size_t build_count,
+                         const int32_t* probe_keys, size_t probe_count,
+                         JoinType join_type,
+                         JoinResult* result);
+
+size_t hash_join_i32_v6_config(const int32_t* build_keys, size_t build_count,
+                                const int32_t* probe_keys, size_t probe_count,
+                                JoinType join_type,
+                                JoinResult* result,
+                                const JoinConfig& config);
+
+// ============================================================================
 // v10.0 深度优化版本 - 完整连接语义 + 新算法
 // ============================================================================
 
@@ -601,11 +627,147 @@ bool is_v10_available();
 const char* get_v10_version_info();
 
 // ============================================================================
+// v10.1 零拷贝优化版本
+// ============================================================================
+
+/**
+ * V10.1 Hash Join - 零拷贝优化
+ *
+ * 优化特性:
+ * - 单次哈希计算 + 缓存 (消除重复计算)
+ * - 指针数组代替数据拷贝 (零拷贝分区)
+ * - 直接写入最终结果缓冲区 (消除合并拷贝)
+ * - 消除索引转换开销
+ *
+ * 内存优化:
+ * - V3: ~9MB 数据拷贝 (100K build + 1M probe)
+ * - V10.1: ~4MB 哈希缓存 (无数据拷贝)
+ */
+size_t hash_join_i32_v10_1(const int32_t* build_keys, size_t build_count,
+                            const int32_t* probe_keys, size_t probe_count,
+                            JoinType join_type,
+                            JoinResult* result);
+
+/**
+ * 获取 V10.1 版本信息
+ */
+const char* get_v10_1_version_info();
+
+/**
+ * V10.2 Hash Join - 单次哈希优化
+ *
+ * 优化特性:
+ * - 单次哈希计算 + 缓存 (消除重复计算)
+ * - 数据拷贝保留 (保证缓存局部性)
+ * - 紧凑哈希表 (key+index 在一起)
+ * - 直接写入最终缓冲区
+ *
+ * 关键洞察: 数据拷贝改善缓存局部性，比零拷贝更快
+ */
+size_t hash_join_i32_v10_2(const int32_t* build_keys, size_t build_count,
+                            const int32_t* probe_keys, size_t probe_count,
+                            JoinType join_type,
+                            JoinResult* result);
+
+const char* get_v10_2_version_info();
+
+// ============================================================================
+// v11.0 SIMD 哈希表探测 + 向量化执行
+// ============================================================================
+
+/**
+ * V11 Hash Join - 真正的 SIMD 哈希表探测
+ *
+ * 核心优化:
+ * - SIMD 并行槽位比较: 一次比较 4 个哈希表槽位
+ * - 向量化结果收集: 批量写入匹配结果
+ * - 激进多级预取: L1 + L2 预取
+ * - 循环展开: 8 路展开减少分支
+ *
+ * 目标: 超越 DuckDB
+ */
+size_t hash_join_i32_v11(const int32_t* build_keys, size_t build_count,
+                          const int32_t* probe_keys, size_t probe_count,
+                          JoinType join_type,
+                          JoinResult* result);
+
+/**
+ * V11 带配置版本
+ *
+ * @param use_simd_parallel true=使用完全SIMD并行槽位比较, false=使用简化版
+ */
+size_t hash_join_i32_v11_config(const int32_t* build_keys, size_t build_count,
+                                 const int32_t* probe_keys, size_t probe_count,
+                                 JoinType join_type,
+                                 JoinResult* result,
+                                 bool use_simd_parallel);
+
+const char* get_v11_version_info();
+
+// ============================================================================
+// V13 两阶段优化 - P0 Hash Join 优化
+// ============================================================================
+
+/**
+ * V13 两阶段 Hash Join
+ *
+ * 核心优化:
+ * 1. Phase 1: 计数遍历，统计总匹配数
+ * 2. Phase 2: 预分配精确容量，一次填充
+ * 3. 紧凑哈希表: 开放寻址，缓存友好
+ * 4. 批量预取: 减少 cache miss
+ *
+ * 目标: 0.06x → 1.5x+
+ */
+size_t hash_join_i32_v13(const int32_t* build_keys, size_t build_count,
+                          const int32_t* probe_keys, size_t probe_count,
+                          JoinType join_type,
+                          JoinResult* result);
+
+size_t hash_join_i32_v13_config(const int32_t* build_keys, size_t build_count,
+                                 const int32_t* probe_keys, size_t probe_count,
+                                 JoinType join_type,
+                                 JoinResult* result,
+                                 const JoinConfig& config);
+
+// ============================================================================
 // V10 常量定义
 // ============================================================================
 
 // 用于 LEFT/RIGHT/FULL JOIN 的空值标记
 constexpr uint32_t NULL_INDEX = 0xFFFFFFFF;
+
+// ============================================================================
+// V14 两阶段预分配优化
+// ============================================================================
+
+/**
+ * V14 Hash Join - 两阶段预分配算法
+ *
+ * 核心优化:
+ * 1. 32 分区 (5-bit radix) vs V3 的 16 分区
+ * 2. 1.5x 负载因子 vs V3 的 1.7x (更紧凑)
+ * 3. 两阶段算法:
+ *    - Phase 1: 并行计数 (无写入)
+ *    - Phase 2: 一次性精确分配
+ *    - Phase 3: 并行填充 (无动态扩容)
+ *
+ * 消除 grow_join_result() 动态扩容开销
+ *
+ * 目标: 4.28x → 8x+
+ */
+size_t hash_join_i32_v14(const int32_t* build_keys, size_t build_count,
+                          const int32_t* probe_keys, size_t probe_count,
+                          JoinType join_type,
+                          JoinResult* result);
+
+size_t hash_join_i32_v14_config(const int32_t* build_keys, size_t build_count,
+                                 const int32_t* probe_keys, size_t probe_count,
+                                 JoinType join_type,
+                                 JoinResult* result,
+                                 const JoinConfig& config);
+
+const char* get_v14_version_info();
 
 } // namespace join
 } // namespace thunderduck

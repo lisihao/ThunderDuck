@@ -385,6 +385,130 @@ void group_min_i32_v6(const int32_t* values, const uint32_t* groups,
 void group_max_i32_v6(const int32_t* values, const uint32_t* groups,
                        size_t count, size_t num_groups, int32_t* out_maxs);
 
+// ============================================================================
+// 多线程并行版本 (10M+ 数据优化)
+// ============================================================================
+
+/**
+ * 多线程并行 SUM - 4 线程并行
+ *
+ * 当数据量 >= 1M 时自动启用多线程
+ * 预期: 10M 数据 3.3x → 5-6x vs DuckDB
+ */
+int64_t sum_i32_parallel(const int32_t* input, size_t count);
+
+/**
+ * 多线程并行 MIN/MAX
+ */
+void minmax_i32_parallel(const int32_t* input, size_t count,
+                          int32_t* out_min, int32_t* out_max);
+
+/**
+ * 多线程并行融合统计量
+ */
+AggregateStats aggregate_all_i32_parallel(const int32_t* input, size_t count);
+
+/**
+ * 多线程并行非零计数
+ */
+size_t count_nonzero_i32_parallel(const int32_t* input, size_t count);
+
+// ============================================================================
+// V12.1 优化版本 - P0 GPU GROUP BY 优化
+// ============================================================================
+
+/**
+ * 检查 V12.1 GPU 分组聚合是否可用
+ */
+bool is_group_aggregate_v3_available();
+
+/**
+ * V12.1 GPU 分组求和 - Warp-level reduction
+ *
+ * 核心优化:
+ * - 低基数 (<=32分组): 纯寄存器累加 + SIMD shuffle
+ * - 中基数 (<=1024分组): 8路展开 + 增加 threadgroup 数量
+ * - 目标: 0.88x → 2.0x+
+ */
+void group_sum_i32_v12_1(const int32_t* values, const uint32_t* groups,
+                          size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v12_1(const uint32_t* groups, size_t count,
+                        size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v12_1(const int32_t* values, const uint32_t* groups,
+                          size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v12_1(const int32_t* values, const uint32_t* groups,
+                          size_t count, size_t num_groups, int32_t* out_maxs);
+
+// ============================================================================
+// V13 优化版本 - P1 GPU GROUP BY 无原子优化
+// ============================================================================
+
+/**
+ * 检查 V13 GPU 分组聚合是否可用
+ */
+bool is_group_aggregate_v13_available();
+
+/**
+ * V13 GPU 分组求和 - 分区聚合策略
+ *
+ * 核心优化:
+ * - Phase 1: 每个 threadgroup 独立累加 (无全局原子)
+ * - Phase 2: 合并分区结果 (仅 num_groups 次操作)
+ *
+ * 目标: 0.78x → 2.0x+
+ */
+void group_sum_i32_v13(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v13(const uint32_t* groups, size_t count,
+                      size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v13(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v13(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int32_t* out_maxs);
+
+// ============================================================================
+// V14 优化版本 - 寄存器缓冲 + 多路分流
+// ============================================================================
+
+/**
+ * V14 分组聚合 - 深度优化版本
+ *
+ * 核心优化:
+ * 1. 寄存器缓冲累加 (低基数 <= 64 分组)
+ *    - 8 个寄存器缓存热分组
+ *    - 减少内存写入
+ * 2. 多路分流 (高基数)
+ *    - 按 group_id % 4 分 4 路
+ *    - 每路独立 SIMD 累加
+ * 3. 并行 + SIMD 合并
+ *    - 4 核并行局部累加
+ *    - SIMD 合并最终结果
+ *
+ * 目标: 2.66x → 4x+
+ */
+void group_sum_i32_v14(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_sum_i32_v14_parallel(const int32_t* values, const uint32_t* groups,
+                                 size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v14(const uint32_t* groups, size_t count,
+                      size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v14(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v14(const int32_t* values, const uint32_t* groups,
+                        size_t count, size_t num_groups, int32_t* out_maxs);
+
+const char* get_group_aggregate_v14_version();
+
 } // namespace aggregate
 } // namespace thunderduck
 
