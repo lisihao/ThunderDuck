@@ -101,11 +101,10 @@ constexpr size_t BLOOM_MIN_BUILD = 500000;          // Bloom 最小 build 数量
 constexpr size_t BLOOM_MAX_SELECTIVITY = 30;        // Bloom 最大选择率 (30%)
 constexpr size_t NPU_MIN_BUILD = 2000000;           // NPU 最小 build 数量 (提高阈值)
 
-// GPU 阈值 (设置非常高 - GPU hash join 当前不如 CPU)
-// 保留代码供未来研究，但实际不会被触发
-constexpr size_t GPU_MIN_TOTAL = 500000000;         // GPU 最小总数据量 (500M - 实际禁用)
-constexpr size_t GPU_MIN_PROBE = 100000000;         // GPU 最小 probe 数量 (100M)
-constexpr size_t GPU_MIN_BUILD = 50000000;          // GPU 最小 build 数量 (50M)
+// GPU 阈值 (V10 调整 - 降低以启用 GPU 加速)
+constexpr size_t GPU_MIN_TOTAL = 5000000;           // GPU 最小总数据量 (5M)
+constexpr size_t GPU_MIN_PROBE = 1000000;           // GPU 最小 probe 数量 (1M)
+constexpr size_t GPU_MIN_BUILD = 500000;            // GPU 最小 build 数量 (500K)
 
 // 自适应分区阈值
 constexpr size_t RADIX_THRESHOLD_0 = 100000;        // < 100K: 不分区

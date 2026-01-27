@@ -457,6 +457,156 @@ bool is_uma_gpu_ready();
 
 } // namespace uma
 
+// ============================================================================
+// v10.0 深度优化版本 - 完整连接语义 + 新算法
+// ============================================================================
+
+/**
+ * V10 配置选项
+ */
+struct JoinConfigV10 {
+    // 基础配置
+    size_t num_threads = 4;
+    bool enable_prefetch = true;
+
+    // SEMI/ANTI 优化
+    bool early_exit_semi = true;       // SEMI JOIN 找到第一个匹配即退出
+
+    // Sort-Merge Join 参数
+    bool assume_sorted = false;        // 假设输入已排序
+    size_t merge_buffer_size = 4096;   // 合并缓冲区大小
+
+    // Range Join 参数
+    bool range_join_simd = true;       // 启用 SIMD 范围比较
+
+    // 字符串键参数
+    size_t string_simd_threshold = 8;  // 字符串长度 >= 8 时使用 SIMD
+
+    // GPU 参数 (调整后的阈值)
+    size_t gpu_min_total = 5000000;    // 5M (原 500M)
+    size_t gpu_min_probe = 1000000;    // 1M
+};
+
+/**
+ * V10 Hash Join - 完整连接语义
+ *
+ * 支持:
+ * - INNER, LEFT, RIGHT, FULL JOIN
+ * - SEMI, ANTI JOIN (优化版)
+ */
+size_t hash_join_i32_v10(const int32_t* build_keys, size_t build_count,
+                          const int32_t* probe_keys, size_t probe_count,
+                          JoinType join_type,
+                          JoinResult* result);
+
+size_t hash_join_i32_v10_config(const int32_t* build_keys, size_t build_count,
+                                 const int32_t* probe_keys, size_t probe_count,
+                                 JoinType join_type,
+                                 JoinResult* result,
+                                 const JoinConfigV10& config);
+
+/**
+ * V10 Sort-Merge Join
+ *
+ * 优化特性:
+ * - SIMD 批量比较
+ * - 分块处理提高缓存命中
+ * - 自动检测已排序输入
+ *
+ * 适用场景:
+ * - 输入已排序
+ * - 需要排序输出
+ * - 内存受限
+ */
+size_t sort_merge_join_i32(const int32_t* left_keys, size_t left_count,
+                            const int32_t* right_keys, size_t right_count,
+                            JoinType join_type,
+                            JoinResult* result);
+
+size_t sort_merge_join_i32_config(const int32_t* left_keys, size_t left_count,
+                                   const int32_t* right_keys, size_t right_count,
+                                   JoinType join_type,
+                                   JoinResult* result,
+                                   const JoinConfigV10& config);
+
+/**
+ * V10 Range Join (范围连接)
+ *
+ * 支持: left_key BETWEEN right_lo AND right_hi
+ *
+ * 优化特性:
+ * - SIMD 并行范围比较
+ * - 区间树加速查找
+ */
+size_t range_join_i32(const int32_t* left_keys, size_t left_count,
+                       const int32_t* right_lo, const int32_t* right_hi,
+                       size_t right_count,
+                       JoinResult* result);
+
+size_t range_join_i32_config(const int32_t* left_keys, size_t left_count,
+                              const int32_t* right_lo, const int32_t* right_hi,
+                              size_t right_count,
+                              JoinResult* result,
+                              const JoinConfigV10& config);
+
+/**
+ * V10 不等值连接
+ *
+ * 支持: left_key < right_key, left_key <= right_key, etc.
+ */
+enum class InequalityOp {
+    LESS_THAN,        // <
+    LESS_EQUAL,       // <=
+    GREATER_THAN,     // >
+    GREATER_EQUAL     // >=
+};
+
+size_t inequality_join_i32(const int32_t* left_keys, size_t left_count,
+                            const int32_t* right_keys, size_t right_count,
+                            InequalityOp op,
+                            JoinResult* result);
+
+/**
+ * V10 字符串键 Hash Join
+ *
+ * 优化特性:
+ * - SIMD 16字节批量哈希
+ * - SIMD 字符串比较
+ */
+size_t hash_join_string(const char* const* build_keys, const size_t* build_lens,
+                         size_t build_count,
+                         const char* const* probe_keys, const size_t* probe_lens,
+                         size_t probe_count,
+                         JoinType join_type,
+                         JoinResult* result);
+
+/**
+ * V10 定长字符串键 Hash Join (更高效)
+ */
+size_t hash_join_fixedstring(const char* build_keys, size_t key_len,
+                              size_t build_count,
+                              const char* probe_keys,
+                              size_t probe_count,
+                              JoinType join_type,
+                              JoinResult* result);
+
+/**
+ * 检查 V10 功能是否可用
+ */
+bool is_v10_available();
+
+/**
+ * 获取 V10 版本信息
+ */
+const char* get_v10_version_info();
+
+// ============================================================================
+// V10 常量定义
+// ============================================================================
+
+// 用于 LEFT/RIGHT/FULL JOIN 的空值标记
+constexpr uint32_t NULL_INDEX = 0xFFFFFFFF;
+
 } // namespace join
 } // namespace thunderduck
 
