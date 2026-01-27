@@ -290,6 +290,38 @@ void group_sum_i32_v4_parallel(const int32_t* values, const uint32_t* groups,
 void group_count_v4_parallel(const uint32_t* groups, size_t count,
                              size_t num_groups, size_t* out_counts);
 
+// ============================================================================
+// v5.0 优化版本 - V9.2 GPU 两阶段分组聚合
+// ============================================================================
+
+/**
+ * 检查 V9.2 GPU 分组聚合是否可用
+ */
+bool is_group_aggregate_v2_available();
+
+/**
+ * v5.0 GPU 两阶段分组求和
+ *
+ * 优化特性:
+ * - Phase 1: Threadgroup 本地累加 (共享内存原子)
+ * - Phase 2: 全局合并 (设备内存原子)
+ * - 全局原子操作从 count 降到 num_groups * num_threadgroups
+ *
+ * 适用条件: count >= 100K, num_groups <= 1024
+ * 否则回退到 v4 多线程实现
+ */
+void group_sum_i32_v5(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int64_t* out_sums);
+
+void group_count_v5(const uint32_t* groups, size_t count,
+                     size_t num_groups, size_t* out_counts);
+
+void group_min_i32_v5(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int32_t* out_mins);
+
+void group_max_i32_v5(const int32_t* values, const uint32_t* groups,
+                       size_t count, size_t num_groups, int32_t* out_maxs);
+
 } // namespace aggregate
 } // namespace thunderduck
 
