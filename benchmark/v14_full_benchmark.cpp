@@ -183,9 +183,15 @@ void test_filter(const BenchConfig& config) {
                 for (auto v : data) appender.AppendRow(v);
             }
 
-            duckdb_time = measure_median_iqr([&]() {
+            // 先获取预期计数
+            {
                 auto result = con.Query("SELECT COUNT(*) FROM t WHERE value > 500000");
                 expected_count = result->GetValue(0, 0).GetValue<int64_t>();
+            }
+
+            // 测试返回索引 (与 ThunderDuck 对等比较)
+            duckdb_time = measure_median_iqr([&]() {
+                con.Query("SELECT rowid FROM t WHERE value > 500000");
             }, config.iterations, config.warmup);
 
             TestResult r{"Filter", "DuckDB", "CPU",
