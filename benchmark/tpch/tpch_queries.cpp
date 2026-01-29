@@ -17,6 +17,7 @@
 #include "tpch_operators_v34.h"
 #include "tpch_operators_v35.h"
 #include "tpch_operators_v36.h"
+#include "tpch_operators_v37.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -236,6 +237,27 @@ static void run_q20_v36_wrapper(TPCHDataLoader& loader) {
     ops_v36::run_q20_v36(loader);
 }
 
+// V37 优化版本包装函数 (Bitmap Anti-Join, OrderKeyState 预计算)
+static void run_q22_v37_wrapper(TPCHDataLoader& loader) {
+    ops_v37::run_q22_v37(loader);
+}
+
+static void run_q21_v37_wrapper(TPCHDataLoader& loader) {
+    ops_v37::run_q21_v37(loader);
+}
+
+static void run_q20_v37_wrapper(TPCHDataLoader& loader) {
+    ops_v37::run_q20_v37(loader);
+}
+
+static void run_q17_v37_wrapper(TPCHDataLoader& loader) {
+    ops_v37::run_q17_v37(loader);
+}
+
+static void run_q8_v37_wrapper(TPCHDataLoader& loader) {
+    ops_v37::run_q8_v37(loader);
+}
+
 void register_all_queries() {
     // Category A - 使用最佳版本
     query_registry["Q1"] = run_q1;              // 基础: 9.15x DuckDB (低基数直接数组聚合)
@@ -243,15 +265,15 @@ void register_all_queries() {
     query_registry["Q5"] = run_q5_v32_wrapper;  // V32: 1.17x (V33有回退)
     query_registry["Q6"] = run_q6_v25_wrapper;  // V25: 1.3x (SIMD Filter + 线程池)
     query_registry["Q7"] = run_q7_v32_wrapper;  // V32: 2.63x (V33有回退)
-    query_registry["Q8"] = run_q8_v34_wrapper;  // V34: 1.06x (V35回退至0.87x,恢复V34)
+    query_registry["Q8"] = run_q8_v34_wrapper;  // V34: 1.06x (V37回退)
     query_registry["Q9"] = run_q9_v32_wrapper;  // V32: 1.30x (V33有回退)
     query_registry["Q10"] = run_q10_v25_wrapper; // V25: 1.7x
     query_registry["Q12"] = run_q12_v27_wrapper; // V27: 0.8x (待优化)
     query_registry["Q13"] = run_q13_v34_wrapper; // V34: 继续攻坚 (LEFT JOIN + COUNT)
     query_registry["Q14"] = run_q14_v27_wrapper; // V27: 1.23x (V35导致崩溃,恢复V27)
     query_registry["Q18"] = run_q18_v32_wrapper; // V32: 4.27x (V33有回退)
-    // Q21: 使用基线实现 (V35导致崩溃)
-    query_registry["Q22"] = run_q22_v34_wrapper; // V34: ~1.0x (V35导致崩溃,恢复V34)
+    // Q21: 使用基线实现 (V37 为 0.05x, 严重回退)
+    query_registry["Q22"] = run_q22_v37_wrapper; // V37: Bitmap Anti-Join 7.76x!
 
     // Category B - Q4, Q11, Q16 使用 V27 优化
     query_registry["Q2"] = run_q2;
@@ -261,9 +283,9 @@ void register_all_queries() {
     query_registry["Q16"] = run_q16_v27_wrapper; // V27: 1.2x (PredicatePrecomputer)
     query_registry["Q19"] = run_q19_v33_wrapper; // V33: ~2.0x (通用化 + 条件组参数化)
 
-    // Category C - V36 相关子查询优化
-    query_registry["Q17"] = run_q17_v36_wrapper; // V36: 相关子查询解关联 1.23x
-    // Q20: 使用基线实现 (V36 为 0.50x，有待改进)
+    // Category C - 相关子查询优化
+    query_registry["Q17"] = run_q17_v36_wrapper; // V36: 1.06x (V37回退)
+    // Q20: 使用基线实现 (V36/V37 均有回退)
 }
 
 QueryImplFunc get_query_impl(const std::string& query_id) {
