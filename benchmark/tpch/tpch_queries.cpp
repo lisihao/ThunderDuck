@@ -8,6 +8,7 @@
  */
 
 #include "tpch_queries.h"
+#include "tpch_query_optimizer.h"
 #include "tpch_operators_v24.h"
 #include "tpch_operators_v25.h"
 #include "tpch_operators_v26.h"
@@ -29,6 +30,7 @@
 #include "tpch_operators_v46.h"
 #include "tpch_operators_v47.h"
 #include "tpch_operators_v48.h"
+#include "tpch_operators_v49.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -356,34 +358,26 @@ static void run_q21_v48_wrapper(TPCHDataLoader& loader) {
     ops_v48::run_q21_v48(loader);
 }
 
+// V49: Q3 Top-N Aware Partial Aggregation
+static void run_q3_v49_wrapper(TPCHDataLoader& loader) {
+    ops_v49::run_q3_v49(loader);
+}
+
 void register_all_queries() {
-    // Category A - 使用最佳版本
-    query_registry["Q1"] = run_q1;              // 基础: 9.15x DuckDB (低基数直接数组聚合)
-    query_registry["Q3"] = run_q3_v31_wrapper;  // V31: 1.13x (V44回退至0.88x,Bloom Filter更高效)
-    query_registry["Q5"] = run_q5_v32_wrapper;  // V32: 1.27x (V45回退,保持V32)
-    query_registry["Q6"] = run_q6_v47_wrapper;  // V47: SIMD 无分支过滤 (目标 3.0x+)
-    query_registry["Q7"] = run_q7_v32_wrapper;  // V32: 2.63x (V33有回退)
-    query_registry["Q8"] = run_q8_v42_wrapper;  // V42: 1.85x (并行化, V34基线: 1.05x)
-    query_registry["Q9"] = run_q9_v32_wrapper;  // V32: 1.30x (V33有回退)
-    query_registry["Q10"] = run_q10_v25_wrapper; // V25: 1.7x
-    query_registry["Q12"] = run_q12_v27_wrapper; // V27: 0.8x (待优化)
-    query_registry["Q13"] = run_q13_v34_wrapper; // V34: 1.96x (V47回退至0.71x)
-    query_registry["Q14"] = run_q14_v46_wrapper; // V46: 通用化直接数组 (V45: 2.91x)
-    query_registry["Q18"] = run_q18_v32_wrapper; // V32: 4.27x (V33有回退)
-    query_registry["Q21"] = run_q21_v48_wrapper; // V48: 1.00x (Group-then-Filter, 非 JOIN/EXISTS)
-    query_registry["Q22"] = run_q22_v37_wrapper; // V37: Bitmap Anti-Join 9.08x
+    // 初始化 TPC-H 查询优化器配置
+    register_tpch_query_configs();
+    auto& optimizer = TPCHQueryOptimizer::instance();
 
-    // Category B - Q4, Q11, Q16 使用 V27 优化
-    query_registry["Q2"] = run_q2;
-    query_registry["Q4"] = run_q4_v27_wrapper;   // V27: 1.2x (Bitmap SEMI Join)
-    query_registry["Q11"] = run_q11_v46_wrapper; // V46: 通用化位图+直接数组 (V45: 4.14x)
-    query_registry["Q15"] = run_q15_v27_wrapper; // V27: 1.3x (直接数组索引 + 并行聚合)
-    query_registry["Q16"] = run_q16_v27_wrapper; // V27: 1.2x (PredicatePrecomputer)
-    query_registry["Q19"] = run_q19_v33_wrapper; // V33: ~2.0x (通用化 + 条件组参数化)
+    // 动态注册所有查询 - 优化器自动选择最佳版本
+    for (const auto& query_id : optimizer.get_all_query_ids()) {
+        auto executor = optimizer.select_best(query_id);
+        if (executor) {
+            query_registry[query_id] = executor;
+        }
+    }
 
-    // Category C - 相关子查询优化
-    query_registry["Q17"] = run_q17_v43_wrapper; // V43: 4.30x (位图过滤+两阶段聚合, V36基线: 1.16x)
-    query_registry["Q20"] = run_q20_v40_wrapper; // V40: 通用算子框架 + 消除硬编码 (目标 >= 1.29x)
+    // 打印注册信息 (调试)
+    // optimizer.print_registry();
 }
 
 QueryImplFunc get_query_impl(const std::string& query_id) {
@@ -396,6 +390,15 @@ QueryImplFunc get_query_impl(const std::string& query_id) {
 
 bool has_optimized_impl(const std::string& query_id) {
     return query_registry.count(query_id) > 0;
+}
+
+std::string get_selected_version(const std::string& query_id) {
+    auto& optimizer = TPCHQueryOptimizer::instance();
+    auto config = optimizer.get_config(query_id);
+    if (config) {
+        return optimizer.get_selected_version(query_id, config->estimated_rows);
+    }
+    return "Base";
 }
 
 // ============================================================================

@@ -178,6 +178,12 @@ QueryImplFunc get_query_impl(const std::string& query_id);
  */
 bool has_optimized_impl(const std::string& query_id);
 
+/**
+ * 获取选中的优化版本
+ * 由 TPCHQueryOptimizer 动态选择
+ */
+std::string get_selected_version(const std::string& query_id);
+
 } // namespace queries
 } // namespace tpch
 } // namespace thunderduck
