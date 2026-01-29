@@ -528,6 +528,68 @@ void group_sum_i32_v15(const int32_t* values, const uint32_t* groups,
 
 const char* get_group_aggregate_v15_version();
 
+// ============================================================================
+// V21: 优化的简单 SUM 实现
+// ============================================================================
+
+/**
+ * sum_i32_v21 - 高性能整数求和
+ *
+ * 优化策略:
+ * - 8 路循环展开最大化 ILP
+ * - 让编译器自动向量化
+ * - 最小化函数调用开销
+ *
+ * @param input 输入数组
+ * @param count 元素数量
+ * @return 求和结果 (int64_t)
+ */
+__attribute__((always_inline))
+inline int64_t sum_i32_v21(const int32_t* input, size_t count) {
+    if (count == 0) return 0;
+
+    const int32_t* __restrict p = input;
+    size_t i = 0;
+
+    // 8 路展开
+    int64_t s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    int64_t s4 = 0, s5 = 0, s6 = 0, s7 = 0;
+
+    for (; i + 8 <= count; i += 8) {
+        s0 += p[i];
+        s1 += p[i + 1];
+        s2 += p[i + 2];
+        s3 += p[i + 3];
+        s4 += p[i + 4];
+        s5 += p[i + 5];
+        s6 += p[i + 6];
+        s7 += p[i + 7];
+    }
+
+    int64_t result = (s0 + s1) + (s2 + s3) + (s4 + s5) + (s6 + s7);
+
+    for (; i < count; ++i) {
+        result += p[i];
+    }
+
+    return result;
+}
+
+/**
+ * sum_i64_v21 - 高性能 int64 求和
+ */
+int64_t sum_i64_v21(const int64_t* input, size_t count);
+
+/**
+ * sum_f32_v21 - 高性能 float32 求和
+ */
+double sum_f32_v21(const float* input, size_t count);
+
+/**
+ * sum_f64_v21 - 高性能 float64 求和
+ */
+double sum_f64_v21(const double* input, size_t count);
+
 } // namespace aggregate
 } // namespace thunderduck
 

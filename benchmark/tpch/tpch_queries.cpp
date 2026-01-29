@@ -18,6 +18,17 @@
 #include "tpch_operators_v35.h"
 #include "tpch_operators_v36.h"
 #include "tpch_operators_v37.h"
+#include "tpch_operators_v38.h"
+#include "tpch_operators_v39.h"
+#include "tpch_operators_v40.h"
+#include "tpch_operators_v41.h"
+#include "tpch_operators_v42.h"
+#include "tpch_operators_v43.h"
+#include "tpch_operators_v44.h"
+#include "tpch_operators_v45.h"
+#include "tpch_operators_v46.h"
+#include "tpch_operators_v47.h"
+#include "tpch_operators_v48.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -258,34 +269,121 @@ static void run_q8_v37_wrapper(TPCHDataLoader& loader) {
     ops_v37::run_q8_v37(loader);
 }
 
+// V38 优化版本包装函数 (排序去重 + 紧凑编码)
+static void run_q21_v38_wrapper(TPCHDataLoader& loader) {
+    ops_v38::run_q21_v38(loader);
+}
+
+static void run_q20_v38_wrapper(TPCHDataLoader& loader) {
+    ops_v38::run_q20_v38(loader);
+}
+
+// V39 优化版本包装函数 (纯排序方案)
+static void run_q21_v39_wrapper(TPCHDataLoader& loader) {
+    ops_v39::run_q21_v39(loader);
+}
+
+static void run_q20_v39_wrapper(TPCHDataLoader& loader) {
+    ops_v39::run_q20_v39(loader);
+}
+
+// V40 优化版本包装函数 (通用算子框架)
+static void run_q20_v40_wrapper(TPCHDataLoader& loader) {
+    ops_v40::run_q20_v40(loader);
+}
+
+// V41 优化版本包装函数 (Q21 单遍预计算)
+static void run_q21_v41_wrapper(TPCHDataLoader& loader) {
+    ops_v41::run_q21_v41(loader);
+}
+
+// V42 优化版本包装函数 (Q8 并行化)
+static void run_q8_v42_wrapper(TPCHDataLoader& loader) {
+    ops_v42::run_q8_v42(loader);
+}
+
+// V43 优化版本包装函数 (Q17 位图过滤 + 两阶段聚合)
+static void run_q17_v43_wrapper(TPCHDataLoader& loader) {
+    ops_v43::run_q17_v43(loader);
+}
+
+// V44 优化版本包装函数 (Q3 直接数组访问 + 线程局部聚合)
+static void run_q3_v44_wrapper(TPCHDataLoader& loader) {
+    ops_v44::run_q3_v44(loader);
+}
+
+// V45 优化版本包装函数 (直接数组优化)
+static void run_q14_v45_wrapper(TPCHDataLoader& loader) {
+    ops_v45::run_q14_v45(loader);
+}
+
+static void run_q11_v45_wrapper(TPCHDataLoader& loader) {
+    ops_v45::run_q11_v45(loader);
+}
+
+static void run_q5_v45_wrapper(TPCHDataLoader& loader) {
+    ops_v45::run_q5_v45(loader);
+}
+
+// V46 通用化版本包装函数 (消除硬编码)
+static void run_q14_v46_wrapper(TPCHDataLoader& loader) {
+    ops_v46::run_q14_v46(loader);
+}
+
+static void run_q11_v46_wrapper(TPCHDataLoader& loader) {
+    ops_v46::run_q11_v46(loader);
+}
+
+static void run_q5_v46_wrapper(TPCHDataLoader& loader) {
+    ops_v46::run_q5_v46(loader);
+}
+
+// V47 通用算子框架版本包装函数
+static void run_q6_v47_wrapper(TPCHDataLoader& loader) {
+    ops_v47::run_q6_v47(loader);
+}
+
+static void run_q13_v47_wrapper(TPCHDataLoader& loader) {
+    ops_v47::run_q13_v47(loader);
+}
+
+static void run_q21_v47_wrapper(TPCHDataLoader& loader) {
+    ops_v47::run_q21_v47(loader);
+}
+
+// V48: Q21 正确实现 - Group-then-Filter (非 JOIN/EXISTS)
+static void run_q21_v48_wrapper(TPCHDataLoader& loader) {
+    ops_v48::run_q21_v48(loader);
+}
+
 void register_all_queries() {
     // Category A - 使用最佳版本
     query_registry["Q1"] = run_q1;              // 基础: 9.15x DuckDB (低基数直接数组聚合)
-    query_registry["Q3"] = run_q3_v31_wrapper;  // V31: 1.14x (V35回退至0.82x,恢复V31)
-    query_registry["Q5"] = run_q5_v32_wrapper;  // V32: 1.17x (V33有回退)
-    query_registry["Q6"] = run_q6_v25_wrapper;  // V25: 1.3x (SIMD Filter + 线程池)
+    query_registry["Q3"] = run_q3_v31_wrapper;  // V31: 1.13x (V44回退至0.88x,Bloom Filter更高效)
+    query_registry["Q5"] = run_q5_v32_wrapper;  // V32: 1.27x (V45回退,保持V32)
+    query_registry["Q6"] = run_q6_v47_wrapper;  // V47: SIMD 无分支过滤 (目标 3.0x+)
     query_registry["Q7"] = run_q7_v32_wrapper;  // V32: 2.63x (V33有回退)
-    query_registry["Q8"] = run_q8_v34_wrapper;  // V34: 1.06x (V37回退)
+    query_registry["Q8"] = run_q8_v42_wrapper;  // V42: 1.85x (并行化, V34基线: 1.05x)
     query_registry["Q9"] = run_q9_v32_wrapper;  // V32: 1.30x (V33有回退)
     query_registry["Q10"] = run_q10_v25_wrapper; // V25: 1.7x
     query_registry["Q12"] = run_q12_v27_wrapper; // V27: 0.8x (待优化)
-    query_registry["Q13"] = run_q13_v34_wrapper; // V34: 继续攻坚 (LEFT JOIN + COUNT)
-    query_registry["Q14"] = run_q14_v27_wrapper; // V27: 1.23x (V35导致崩溃,恢复V27)
+    query_registry["Q13"] = run_q13_v34_wrapper; // V34: 1.96x (V47回退至0.71x)
+    query_registry["Q14"] = run_q14_v46_wrapper; // V46: 通用化直接数组 (V45: 2.91x)
     query_registry["Q18"] = run_q18_v32_wrapper; // V32: 4.27x (V33有回退)
-    // Q21: 使用基线实现 (V37 为 0.05x, 严重回退)
-    query_registry["Q22"] = run_q22_v37_wrapper; // V37: Bitmap Anti-Join 7.76x!
+    query_registry["Q21"] = run_q21_v48_wrapper; // V48: 1.00x (Group-then-Filter, 非 JOIN/EXISTS)
+    query_registry["Q22"] = run_q22_v37_wrapper; // V37: Bitmap Anti-Join 9.08x
 
     // Category B - Q4, Q11, Q16 使用 V27 优化
     query_registry["Q2"] = run_q2;
     query_registry["Q4"] = run_q4_v27_wrapper;   // V27: 1.2x (Bitmap SEMI Join)
-    query_registry["Q11"] = run_q11_v27_wrapper; // V27: 1.1x (单遍扫描 + 后置过滤)
+    query_registry["Q11"] = run_q11_v46_wrapper; // V46: 通用化位图+直接数组 (V45: 4.14x)
     query_registry["Q15"] = run_q15_v27_wrapper; // V27: 1.3x (直接数组索引 + 并行聚合)
     query_registry["Q16"] = run_q16_v27_wrapper; // V27: 1.2x (PredicatePrecomputer)
     query_registry["Q19"] = run_q19_v33_wrapper; // V33: ~2.0x (通用化 + 条件组参数化)
 
     // Category C - 相关子查询优化
-    query_registry["Q17"] = run_q17_v36_wrapper; // V36: 1.06x (V37回退)
-    // Q20: 使用基线实现 (V36/V37 均有回退)
+    query_registry["Q17"] = run_q17_v43_wrapper; // V43: 4.30x (位图过滤+两阶段聚合, V36基线: 1.16x)
+    query_registry["Q20"] = run_q20_v40_wrapper; // V40: 通用算子框架 + 消除硬编码 (目标 >= 1.29x)
 }
 
 QueryImplFunc get_query_impl(const std::string& query_id) {

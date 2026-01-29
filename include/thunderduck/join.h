@@ -824,6 +824,62 @@ size_t anti_join_gpu(const int32_t* build_keys, size_t build_count,
  */
 bool is_semi_join_gpu_available();
 
+// ============================================================================
+// GPU INNER Join V19.1
+// ============================================================================
+
+/**
+ * GPU INNER Join - Metal 两阶段并行
+ *
+ * 优化特性:
+ * - CPU 构建哈希表 (支持重复键链表)
+ * - Phase 1: GPU 并行计数每个 probe 的匹配数
+ * - Phase 2: GPU 并行写入匹配对
+ * - 总数据量 >= 500K 自动使用 GPU
+ *
+ * @param build_keys Build 表键数组
+ * @param build_count Build 表行数
+ * @param probe_keys Probe 表键数组
+ * @param probe_count Probe 表行数
+ * @param result 输出结果
+ * @return 匹配数量
+ */
+size_t inner_join_gpu(const int32_t* build_keys, size_t build_count,
+                       const int32_t* probe_keys, size_t probe_count,
+                       JoinResult* result);
+
+/**
+ * 检查 GPU INNER Join 是否可用
+ */
+bool is_inner_join_gpu_available();
+
+// ============================================================================
+// V19.2 激进预取 + SIMD 并行槽位比较
+// ============================================================================
+
+/**
+ * V19.2 Hash Join - 激进预取 + SIMD 并行槽位比较
+ *
+ * 优化特性:
+ * - 激进预取: 预取距离 32 (原 16) + 8 槽位预取 (原 4)
+ * - SIMD 并行槽位比较: 一次比较 4 个连续槽位
+ * - 16 元素批次哈希 (原 8)
+ * - 8 线程并行 (全核)
+ *
+ * 预期提升:
+ * - 激进预取: +10-20%
+ * - SIMD 并行槽位比较: +20-30%
+ */
+size_t hash_join_i32_v19_2(const int32_t* build_keys, size_t build_count,
+                            const int32_t* probe_keys, size_t probe_count,
+                            JoinType join_type,
+                            JoinResult* result);
+
+/**
+ * 获取 V19.2 版本信息
+ */
+const char* get_hash_join_v19_2_version();
+
 } // namespace join
 } // namespace thunderduck
 

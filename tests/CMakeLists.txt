@@ -15,3 +15,9 @@ add_test(NAME test_join COMMAND test_join)
 add_executable(test_sort test_sort.cpp)
 target_link_libraries(test_sort thunderduck)
 add_test(NAME test_sort COMMAND test_sort)
+
+# V23 Framework Test
+add_executable(test_framework framework_test.cpp)
+target_include_directories(test_framework PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_framework thunderduck)
+add_test(NAME test_framework COMMAND test_framework)

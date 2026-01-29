@@ -142,6 +142,119 @@ double sum_f64(const double* input, size_t count) {
 }
 
 // ============================================================================
+// V21: 优化的 SUM 实现 - 最小化 int32→int64 转换开销
+// ============================================================================
+
+// sum_i32_v21 is now inline in the header
+
+int64_t sum_i64_v21(const int64_t* input, size_t count) {
+    if (count == 0) return 0;
+
+#ifdef __aarch64__
+    // int64 累加器，4 路展开
+    int64x2_t acc0 = vdupq_n_s64(0);
+    int64x2_t acc1 = vdupq_n_s64(0);
+    int64x2_t acc2 = vdupq_n_s64(0);
+    int64x2_t acc3 = vdupq_n_s64(0);
+    size_t i = 0;
+
+    for (; i + 8 <= count; i += 8) {
+        acc0 = vaddq_s64(acc0, vld1q_s64(input + i));
+        acc1 = vaddq_s64(acc1, vld1q_s64(input + i + 2));
+        acc2 = vaddq_s64(acc2, vld1q_s64(input + i + 4));
+        acc3 = vaddq_s64(acc3, vld1q_s64(input + i + 6));
+    }
+
+    acc0 = vaddq_s64(acc0, acc1);
+    acc2 = vaddq_s64(acc2, acc3);
+    acc0 = vaddq_s64(acc0, acc2);
+    int64_t result = vaddvq_s64(acc0);
+
+    for (; i < count; ++i) {
+        result += input[i];
+    }
+    return result;
+#else
+    int64_t result = 0;
+    for (size_t i = 0; i < count; ++i) {
+        result += input[i];
+    }
+    return result;
+#endif
+}
+
+double sum_f32_v21(const float* input, size_t count) {
+    if (count == 0) return 0.0;
+
+#ifdef __aarch64__
+    // 使用 4 个 float32x4 累加器 (单精度累加足够，最后转 double)
+    float32x4_t acc0 = vdupq_n_f32(0.0f);
+    float32x4_t acc1 = vdupq_n_f32(0.0f);
+    float32x4_t acc2 = vdupq_n_f32(0.0f);
+    float32x4_t acc3 = vdupq_n_f32(0.0f);
+    size_t i = 0;
+
+    for (; i + 16 <= count; i += 16) {
+        acc0 = vaddq_f32(acc0, vld1q_f32(input + i));
+        acc1 = vaddq_f32(acc1, vld1q_f32(input + i + 4));
+        acc2 = vaddq_f32(acc2, vld1q_f32(input + i + 8));
+        acc3 = vaddq_f32(acc3, vld1q_f32(input + i + 12));
+    }
+
+    acc0 = vaddq_f32(acc0, acc1);
+    acc2 = vaddq_f32(acc2, acc3);
+    acc0 = vaddq_f32(acc0, acc2);
+    double result = (double)vaddvq_f32(acc0);
+
+    for (; i < count; ++i) {
+        result += (double)input[i];
+    }
+    return result;
+#else
+    double result = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        result += (double)input[i];
+    }
+    return result;
+#endif
+}
+
+double sum_f64_v21(const double* input, size_t count) {
+    if (count == 0) return 0.0;
+
+#ifdef __aarch64__
+    float64x2_t acc0 = vdupq_n_f64(0.0);
+    float64x2_t acc1 = vdupq_n_f64(0.0);
+    float64x2_t acc2 = vdupq_n_f64(0.0);
+    float64x2_t acc3 = vdupq_n_f64(0.0);
+    size_t i = 0;
+
+    for (; i + 8 <= count; i += 8) {
+        acc0 = vaddq_f64(acc0, vld1q_f64(input + i));
+        acc1 = vaddq_f64(acc1, vld1q_f64(input + i + 2));
+        acc2 = vaddq_f64(acc2, vld1q_f64(input + i + 4));
+        acc3 = vaddq_f64(acc3, vld1q_f64(input + i + 6));
+    }
+
+    acc0 = vaddq_f64(acc0, acc1);
+    acc2 = vaddq_f64(acc2, acc3);
+    acc0 = vaddq_f64(acc0, acc2);
+    double result = vaddvq_f64(acc0);
+
+    for (; i < count; ++i) {
+        result += input[i];
+    }
+    return result;
+#else
+    double result = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        result += input[i];
+    }
+    return result;
+#endif
+}
+
+// ============================================================================
 // MIN 实现
 // ============================================================================
 

@@ -25,6 +25,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 file(GLOB_RECURSE CORE_SOURCES "src/core/*.cpp")
 file(GLOB_RECURSE OPERATOR_SOURCES "src/operators/**/*.cpp")
 file(GLOB_RECURSE NPU_SOURCES "src/npu/*.cpp")
+file(GLOB_RECURSE NPU_SOURCES_MM "src/npu/*.mm")  # V19.5: NPU Objective-C++ files
 file(GLOB_RECURSE UTIL_SOURCES "src/utils/*.cpp")
 file(GLOB_RECURSE ASM_SOURCES "src/operators/**/*.S")
 
@@ -36,6 +37,7 @@ add_library(thunderduck STATIC
     ${CORE_SOURCES}
     ${OPERATOR_SOURCES}
     ${NPU_SOURCES}
+    ${NPU_SOURCES_MM}
     ${UTIL_SOURCES}
     ${ASM_SOURCES}
     ${GPU_SOURCES}
@@ -45,11 +47,13 @@ target_include_directories(thunderduck PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-# Apple 框架链接 (Metal, Accelerate)
+# Apple 框架链接 (Metal, Accelerate, MPS)
 if(APPLE)
     find_library(METAL_FRAMEWORK Metal)
     find_library(FOUNDATION_FRAMEWORK Foundation)
     find_library(ACCELERATE_FRAMEWORK Accelerate)
+    find_library(MPS_FRAMEWORK MetalPerformanceShaders)
+    find_library(MPSGRAPH_FRAMEWORK MetalPerformanceShadersGraph)
 
     if(METAL_FRAMEWORK)
         message(STATUS "Found Metal framework")
@@ -65,6 +69,18 @@ if(APPLE)
         message(STATUS "Found Accelerate framework (BNNS)")
         add_definitions(-DTHUNDERDUCK_HAS_BNNS)
         target_link_libraries(thunderduck ${ACCELERATE_FRAMEWORK})
+    endif()
+
+    if(MPS_FRAMEWORK)
+        message(STATUS "Found Metal Performance Shaders framework")
+        add_definitions(-DTHUNDERDUCK_HAS_MPS)
+        target_link_libraries(thunderduck ${MPS_FRAMEWORK})
+    endif()
+
+    if(MPSGRAPH_FRAMEWORK)
+        message(STATUS "Found Metal Performance Shaders Graph framework (V19.5)")
+        add_definitions(-DTHUNDERDUCK_HAS_MPSGRAPH)
+        target_link_libraries(thunderduck ${MPSGRAPH_FRAMEWORK})
     endif()
 endif()
 
