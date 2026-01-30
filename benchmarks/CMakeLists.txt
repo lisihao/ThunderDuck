@@ -77,7 +77,17 @@ set(TPCH_SOURCES
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v46.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v47.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v48.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v49.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v50.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v51.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v52.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v53.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v54.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v55.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v56.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v57.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_queries.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_query_optimizer.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_report.cpp
 )
 add_executable(tpch_benchmark ${TPCH_SOURCES})
@@ -93,3 +103,43 @@ set_target_properties(tpch_benchmark PROPERTIES
 )
 # 启用 C++17 (用于 structured bindings)
 target_compile_features(tpch_benchmark PRIVATE cxx_std_17)
+
+# 系统表查看工具
+add_executable(show_catalog ${CMAKE_SOURCE_DIR}/benchmark/show_system_catalog.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_query_optimizer.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v24.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v25.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v27.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v32.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v33.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v34.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v35.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v36.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v37.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v40.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v42.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v43.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v46.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v47.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v48.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v49.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v50.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v51.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v52.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v53.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v54.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v55.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v56.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v57.cpp
+)
+target_link_libraries(show_catalog thunderduck duckdb)
+target_include_directories(show_catalog PRIVATE
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/duckdb
+)
+set_target_properties(show_catalog PROPERTIES
+    BUILD_RPATH "${CMAKE_SOURCE_DIR}/third_party/duckdb"
+    INSTALL_RPATH "${CMAKE_SOURCE_DIR}/third_party/duckdb"
+)
+target_compile_features(show_catalog PRIVATE cxx_std_17)

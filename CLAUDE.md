@@ -1,6 +1,6 @@
 # ThunderDuck 开发规范
 
-> **版本**: 1.1.0 | **更新日期**: 2026-01-26
+> **版本**: 1.3.0 | **更新日期**: 2026-01-30
 
 ## 项目概述
 
@@ -101,6 +101,189 @@ times.erase(std::remove_if(times.begin(), times.end(),
 - 微基准测试: ≥30 次迭代
 - 完整算子测试: ≥10 次迭代
 - 预热运行: ≥1 次 (不计入统计)
+
+## 系统表架构规则 (强制)
+
+所有开发的算子必须遵循以下规则：
+
+### 1. 算子必须注册到系统表
+
+每个新算子在 `tpch_query_optimizer.cpp` 的 `register_tpch_query_configs()` 中注册：
+
+```cpp
+cat.register_operator(
+    "V54-NativeDoubleSIMDFilter",  // 算子名称 (版本-功能)
+    0.1f,                           // startup_ms: 启动成本
+    0.0003f,                        // per_row_us: 每行处理成本
+    10000,                          // min_rows: 最小适用行数
+    0                               // max_rows: 最大适用行数 (0=无上限)
+);
+```
+
+### 2. 优化器从系统表读取决策
+
+优化器 **必须** 从 `catalog::catalog()` 内存数据读取算子信息：
+
+```cpp
+// 正确: 从系统表读取
+auto& cat = catalog::catalog();
+auto stats = cat.get_version_stats(query_id, version);
+auto cost = cat.estimate_cost(operator_name, row_count);
+
+// 错误: 硬编码在头文件中
+if (version == "V54") { cost = 0.1 + rows * 0.0003; }
+```
+
+### 3. 头文件保留描述性信息
+
+头文件 (`tpch_operators_v*.h`) 仍需保留：
+- 类型定义和接口声明
+- 算子功能文档注释
+- 适用场景说明
+
+```cpp
+/**
+ * V54 NativeDoubleSIMDFilter
+ *
+ * 功能: 原生 double 列 SIMD 过滤 + 聚合
+ * 适用: 单表扫描 + 多谓词过滤 (如 Q6)
+ * 特点: 8 线程 SIMD, 最低每行成本
+ *
+ * 成本模型 (记录在系统表):
+ *   startup_ms: 0.1
+ *   per_row_us: 0.0003
+ *   min_rows: 10000
+ */
+class NativeDoubleSIMDFilter { ... };
+```
+
+### 4. 系统表数据结构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ System Catalog Structure                                        │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. td_operators     - 算子元数据 (成本模型)                     │
+│ 2. td_query_stats   - 查询性能统计 (历史数据)                   │
+│ 3. td_sketch_buckets - 时间尺度 Sketch (多分辨率聚合)           │
+│ 4. td_metrics       - 性能指标环形缓冲区                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 5. 性能数据自动采集
+
+每次基准测试自动写入系统表：
+- DuckDB 基线时间
+- ThunderDuck 优化版本时间
+- 时间尺度 Sketch (自动卷积: 秒→分→时→日)
+
+## 通用算子设计规则 (铁律)
+
+**禁止硬编码和专用设计**。所有算子必须是通用的、可复用的。
+
+### 1. 禁止硬编码 (NEVER)
+
+```cpp
+// ❌ 禁止: 硬编码魔数
+static constexpr size_t MAX_SIZE = 300000;
+if (partkey < 200000) { ... }
+
+// ✅ 正确: 运行时检测或配置
+static size_t max_size() {
+    return compute_from_l2_cache();  // 基于硬件自动计算
+}
+if (partkey <= detected_max_key) { ... }
+```
+
+### 2. 禁止查询专用设计 (NEVER)
+
+```cpp
+// ❌ 禁止: 查询专用算子
+class Q8ParallelMultiJoin { ... };
+void run_q17_optimized() { ... };
+
+// ✅ 正确: 通用算子，查询无关
+class ParallelMultiJoin { ... };  // 适用于任意多表 JOIN
+class TwoPhaseAggregator { ... }; // 适用于任意两阶段聚合
+```
+
+### 3. 禁止 std::function 在热路径 (NEVER)
+
+```cpp
+// ❌ 禁止: std::function 无法内联
+void process(std::function<bool(size_t)> filter) {
+    for (size_t i = 0; i < n; ++i) {
+        if (filter(i)) { ... }  // 虚调用开销!
+    }
+}
+
+// ✅ 正确: 模板参数，编译时内联
+template<typename FilterFn>
+void process(FilterFn&& filter) {
+    for (size_t i = 0; i < n; ++i) {
+        if (filter(i)) { ... }  // 内联!
+    }
+}
+```
+
+### 4. 自适应存储结构 (MUST)
+
+```cpp
+// ✅ 正确: 自动检测 key 范围，选择最优结构
+template<typename KeyT, typename ValueT>
+class AdaptiveMap {
+public:
+    void build(const KeyT* keys, size_t count) {
+        // 自动检测 key 范围
+        KeyT min_key = *std::min_element(keys, keys + count);
+        KeyT max_key = *std::max_element(keys, keys + count);
+        size_t range = max_key - min_key + 1;
+
+        // 自适应选择: 直接数组 vs Hash 表
+        if (range <= compute_l2_friendly_size<ValueT>()) {
+            use_direct_array(min_key, range);
+        } else {
+            use_hash_table(count);
+        }
+    }
+};
+```
+
+### 5. 零硬编码检查清单
+
+每次提交前检查:
+
+| 检查项 | 禁止 | 正确做法 |
+|--------|------|----------|
+| 魔数 | `300000`, `200000` | `compute_from_hardware()` |
+| 查询名 | `Q8`, `Q17` | 无查询引用 |
+| 表名 | `lineitem`, `orders` | 泛型参数 |
+| 列名 | `l_partkey` | 列索引或泛型 |
+| 日期常量 | `9131` | 配置参数 |
+| 字符串常量 | `"BRAZIL"` | 配置参数 |
+
+### 6. 性能 vs 通用性权衡
+
+**原则**: 通用性优先，但不牺牲核心性能。
+
+```cpp
+// ✅ 正确: 通用设计 + 编译时优化
+template<typename KeyT, bool UseDirectArray = false>
+class GenericJoin {
+    // 编译时分支消除，零运行时开销
+    auto lookup(KeyT key) const {
+        if constexpr (UseDirectArray) {
+            return direct_array_[key - offset_];
+        } else {
+            return hash_table_.find(key);
+        }
+    }
+};
+
+// 使用时: 编译器生成两个特化版本
+using FastJoin = GenericJoin<int32_t, true>;   // 直接数组版本
+using FlexJoin = GenericJoin<int32_t, false>;  // Hash 表版本
+```
 
 ## 文档
 
