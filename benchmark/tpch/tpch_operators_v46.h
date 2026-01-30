@@ -17,6 +17,7 @@
 
 #include "tpch_data_loader.h"
 #include "tpch_config_v33.h"  // DateRange, QueryConfig
+#include "tpch_constants.h"   // 统一常量
 #include <vector>
 #include <functional>
 #include <string>
@@ -223,8 +224,8 @@ struct Q14Config {
     std::string type_prefix;        // 类型前缀 (如 "PROMO")
 
     Q14Config() : type_prefix("PROMO") {
-        date_range.lo = 9374;       // 默认 1995-09-01
-        date_range.hi = 9404;       // 默认 1995-10-01
+        date_range.lo = constants::dates::D1995_09_01;
+        date_range.hi = constants::dates::D1995_10_01;
     }
 };
 
@@ -238,7 +239,7 @@ struct Q11Config {
     std::string target_nation;      // 目标国家
     double threshold_factor;        // 阈值因子
 
-    Q11Config() : target_nation("GERMANY"), threshold_factor(0.0001) {}
+    Q11Config() : target_nation(constants::nations::GERMANY), threshold_factor(0.0001) {}
 };
 
 void run_q11_v46(TPCHDataLoader& loader, const Q11Config& config);
@@ -251,9 +252,9 @@ struct Q5Config {
     ops_v33::DateRange date_range;  // 日期范围
     std::string target_region;      // 目标区域
 
-    Q5Config() : target_region("ASIA") {
-        date_range.lo = 8766;       // 默认 1994-01-01
-        date_range.hi = 9131;       // 默认 1995-01-01
+    Q5Config() : target_region(constants::regions::ASIA) {
+        date_range.lo = constants::dates::D1994_01_01;
+        date_range.hi = constants::dates::D1995_01_01;
     }
 };
 

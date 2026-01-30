@@ -32,6 +32,7 @@
 #include "tpch_operators_v55.h"
 #include "tpch_operators_v56.h"
 #include "tpch_operators_v57.h"
+#include "tpch_operators_v58.h"
 
 namespace thunderduck {
 namespace tpch {
@@ -253,6 +254,15 @@ void register_tpch_query_configs() {
     cat.register_operator("V57-ZeroCostAggregator", 0.08f, 0.002f, 10000, 0);
     cat.register_operator("V57-ParallelScanner", 0.2f, 0.001f, 100000, 0);
 
+    // ------------------------------------------------------------------------
+    // V58: 深度优化算子 (DirectArrayAggregator, PrecomputedBitmap, ParallelScan)
+    // 适用: Q3, Q9, Q2 - O(1) 热路径 + SIMD 批处理
+    // ------------------------------------------------------------------------
+    cat.register_operator("V58-DirectArrayAggregator", 0.05f, 0.0008f, 50000, 0);
+    cat.register_operator("V58-PrecomputedBitmap", 0.03f, 0.0001f, 10000, 0);
+    cat.register_operator("V58-ParallelScanExecutor", 0.1f, 0.0005f, 10000, 0);
+    cat.register_operator("V58-FusedSIMDFilterAggregate", 0.08f, 0.0006f, 100000, 0);
+
     // ========================================================================
     // Q1: 定价汇总报告 - 单表聚合 (9.15x)
     // ========================================================================
@@ -286,10 +296,28 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
+            // V58: ParallelScan + PrecomputedBitmap + DirectArray (预期 2.0x)
+            // 适用性: 需要足够数据量触发并行收益 (>= 10000 行)
+            {"V58", 2.0, 0, 0,
+             [](TPCHDataLoader& l) { ops_v58::run_q2_v58(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V58 ParallelScan 需要足够数据量才能体现并行优势
+                 return ctx.row_count >= 10000;
+             }},
             // V56: Direct Array 解关联 + O(1) 查找
-            {"V56", 1.5, 0, 0, [](TPCHDataLoader& l) { ops_v56::run_q2_v56(l); }},
+            // 适用性: 中等数据量，适合单线程直接数组
+            {"V56", 1.5, 0, 0,
+             [](TPCHDataLoader& l) { ops_v56::run_q2_v56(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V56 适合较小数据集
+                 return ctx.row_count >= 1000 && ctx.row_count < 1000000;
+             }},
+            // V55: SubqueryDecorrelation 预计算
+            {"V55", 1.4, 0, 0,
+             [](TPCHDataLoader& l) { ops_v55::run_q2_v55(l); },
+             nullptr},  // 无特殊限制
             // Base fallback
-            {"Base", 1.0, 0, 0, queries::run_q2}
+            {"Base", 1.0, 0, 0, queries::run_q2, nullptr}
         };
         config.fallback = queries::run_q2;
 
@@ -297,7 +325,7 @@ void register_tpch_query_configs() {
     }
 
     // ========================================================================
-    // Q3: 运输优先级 - 3 表 JOIN + Top-N (V52: BitmapPredicateIndex)
+    // Q3: 运输优先级 - 3 表 JOIN + Top-N (V49: TopN-Aware 聚合)
     // ========================================================================
     {
         QueryOperatorConfig config;
@@ -309,14 +337,30 @@ void register_tpch_query_configs() {
         config.has_top_n = true;
 
         config.candidates = {
-            // V49 最优: Top-N Aware 聚合
-            {"V49", 1.29, 1000000, 0, [](TPCHDataLoader& l) { ops_v49::run_q3_v49(l); }},
-            // V31: GPU SEMI + V19.2 JOIN
-            {"V31", 1.14, 100000, 1000000, [](TPCHDataLoader& l) { ops_v27::run_q3_v31(l); }},
-            // V27 小数据
-            {"V27", 0.82, 10000, 100000, [](TPCHDataLoader& l) { ops_v27::run_q3_v27(l); }},
-            // V25 基础
-            {"V25", 0.53, 0, 10000, [](TPCHDataLoader& l) { ops_v25::run_q3_v25(l); }}
+            // V49: Top-N Aware 聚合 (实测 1.29x)
+            // 适用性: 需要大数据量，且 orderkey 范围过大时不适合 DirectArray
+            // 注: V58 DirectArrayAggregator 不适用于 Q3 (orderkey 范围 ~6M 超出 L2 缓存)
+            {"V49", 1.29, 0, 0,
+             [](TPCHDataLoader& l) { ops_v49::run_q3_v49(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V49 TopN-Aware 适合大数据量 + 高基数 key
+                 // orderkey 范围通常很大，不适合 DirectArray
+                 return ctx.row_count >= 100000 ||
+                        ctx.max_key_range > 250000;  // 超出 L2 缓存阈值
+             }},
+            // V31: GPU SEMI + V19.2 JOIN (中等数据量)
+            {"V31", 1.14, 100000, 1000000,
+             [](TPCHDataLoader& l) { ops_v27::run_q3_v31(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // GPU 在中等数据量有优势
+                 return ctx.row_count >= 100000 && ctx.row_count <= 1000000;
+             }},
+            // V27: 小数据集
+            {"V27", 0.82, 10000, 100000,
+             [](TPCHDataLoader& l) { ops_v27::run_q3_v27(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count < 100000;
+             }}
         };
         config.fallback = queries::run_q3;
 
@@ -356,12 +400,42 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            // V57: 零开销通用算子 (实测 1.81x，超越专用 V32)
-            {"V57", 1.81, 0, 0, [](TPCHDataLoader& l) { ops_v57::run_q5_v57(l); }},
-            // V32: 紧凑 Hash + 批量优化
-            {"V32", 1.27, 0, 0, [](TPCHDataLoader& l) { ops_v32::run_q5_v32(l); }},
-            // V25 基础
-            {"V25", 0.8, 0, 100000, [](TPCHDataLoader& l) { ops_v25::run_q5_v25(l); }}
+            // V57: 零开销通用算子
+            // 适用性: 大数据量 + 多表 JOIN
+            {"V57", 1.81, 0, 0,
+             [](TPCHDataLoader& l) { ops_v57::run_q5_v57(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V57 零开销算子适合大规模 JOIN
+                 return ctx.row_count >= 100000;
+             }},
+            // V56: 预计算 order→nation
+            {"V56", 1.7, 0, 0,
+             [](TPCHDataLoader& l) { ops_v56::run_q5_v56(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 50000;
+             }},
+            // V53: ChunkedDirectArray 优化
+            {"V53", 1.6, 0, 0,
+             [](TPCHDataLoader& l) { ops_v53::run_q5_v53(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 50000;
+             }},
+            // V52: BitmapPredicateIndex 优化
+            {"V52", 1.5, 0, 0,
+             [](TPCHDataLoader& l) { ops_v52::run_q5_v52(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 10000;
+             }},
+            // V51: PartitionedAggregation 优化
+            {"V51", 1.4, 0, 0,
+             [](TPCHDataLoader& l) { ops_v51::run_q5_v51(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 10000;
+             }},
+            // V32: 紧凑 Hash + 批量优化 (通用回退)
+            {"V32", 1.27, 0, 0,
+             [](TPCHDataLoader& l) { ops_v32::run_q5_v32(l); },
+             nullptr}  // 无限制，作为回退
         };
         config.fallback = queries::run_q5;
 
@@ -385,16 +459,28 @@ void register_tpch_query_configs() {
             // V54: 通用 NativeDoubleSIMDFilter 算子
             // 适用条件: 单表扫描 + 原生 double 列 + 多谓词过滤
             // 成本模型: 0.1ms 启动 + 0.0003us/行
-            {"V54-NativeDoubleSIMDFilter", 2.0, 10000, 0, [](TPCHDataLoader& l) {
-                // 检查适用性
-                if (ops_v54::is_v54_applicable("Q6", l.lineitem().count, true)) {
-                    ops_v54::run_q6_v54(l);
-                } else {
-                    ops_v47::run_q6_v47(l);  // 回退到 V47
-                }
-            }},
-            // V47: SIMD 无分支过滤 (备选)
-            {"V47-SIMDBranchless", 1.8, 0, 10000, [](TPCHDataLoader& l) { ops_v47::run_q6_v47(l); }}
+            {"V54-NativeDoubleSIMDFilter", 2.0, 10000, 0,
+             [](TPCHDataLoader& l) {
+                 // 检查适用性
+                 if (ops_v54::is_v54_applicable("Q6", l.lineitem().count, true)) {
+                     ops_v54::run_q6_v54(l);
+                 } else {
+                     ops_v47::run_q6_v47(l);  // 回退到 V47
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V54 适用条件:
+                 // 1. 需要原生 double 列 (SIMD float64 操作)
+                 // 2. 数据量足够大 (>= 10000 行)
+                 return ctx.has_native_double && ctx.row_count >= 10000;
+             }},
+            // V47: SIMD 无分支过滤 (小数据量或无原生 double 时使用)
+            {"V47-SIMDBranchless", 1.8, 0, 10000,
+             [](TPCHDataLoader& l) { ops_v47::run_q6_v47(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V47 作为小数据量回退，或非原生 double 场景
+                 return ctx.row_count < 10000 || !ctx.has_native_double;
+             }}
         };
         config.fallback = queries::run_q6;
 
@@ -413,8 +499,19 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            {"V32", 2.63, 0, 0, [](TPCHDataLoader& l) { ops_v32::run_q7_v32(l); }},
-            {"V25", 1.5, 0, 0, [](TPCHDataLoader& l) { ops_v25::run_q7_v25(l); }}
+            // V32: CompactHash + 8 路并行预取
+            // 适用性: 多表 JOIN 大数据量
+            {"V32", 2.63, 0, 0,
+             [](TPCHDataLoader& l) { ops_v32::run_q7_v32(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
+            // V25: 较轻量实现 (小数据量)
+            {"V25", 1.5, 0, 0,
+             [](TPCHDataLoader& l) { ops_v25::run_q7_v25(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count < 100000;
+             }}
         };
         config.fallback = queries::run_q7;
 
@@ -445,7 +542,7 @@ void register_tpch_query_configs() {
     }
 
     // ========================================================================
-    // Q9: 产品利润 - 6 表 JOIN (V52: DirectArrayJoin + BitmapPredicateIndex)
+    // Q9: 产品利润 - 6 表 JOIN (V32: CompactHash + Bloom)
     // ========================================================================
     {
         QueryOperatorConfig config;
@@ -456,9 +553,21 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            // V32 最优: 紧凑 Hash + Bloom Filter
-            {"V32", 1.30, 0, 0, [](TPCHDataLoader& l) { ops_v32::run_q9_v32(l); }},
-            {"V25", 0.9, 0, 0, [](TPCHDataLoader& l) { ops_v25::run_q9_v25(l); }}
+            // V32: 紧凑 Hash + Bloom Filter (实测 1.30x)
+            // 适用性: 大数据量多表 JOIN
+            // 注: V58 DirectArrayAggregator 不适用 (聚合 key 空间 25*65536 ≈ 1.6M 超出 L2)
+            {"V32", 1.30, 0, 0,
+             [](TPCHDataLoader& l) { ops_v32::run_q9_v32(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V32 适合大规模 JOIN + 高基数聚合
+                 return ctx.row_count >= 50000;
+             }},
+            // V25: 较轻量实现 (小数据量)
+            {"V25", 0.9, 0, 0,
+             [](TPCHDataLoader& l) { ops_v25::run_q9_v25(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count < 50000;
+             }}
         };
         config.fallback = queries::run_q9;
 
@@ -498,8 +607,22 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
-            {"V46", 4.14, 0, 0, [](TPCHDataLoader& l) { ops_v46::run_q11_v46(l); }},
-            {"V27", 2.0, 0, 0, [](TPCHDataLoader& l) { ops_v27::run_q11_v27(l); }}
+            // V46: DirectArray 聚合
+            // 适用性: partkey 范围需要适合 L2 缓存 (< 250K 个 int64)
+            {"V46", 4.14, 0, 0,
+             [](TPCHDataLoader& l) { ops_v46::run_q11_v46(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // DirectArray 适用条件:
+                 // max_key_range * sizeof(int64_t) < L2 cache (4MB)
+                 // => max_key_range < 500K (保守估计 250K 以留余量)
+                 constexpr size_t L2_CACHE_ENTRY_LIMIT = 250000;
+                 return ctx.max_key_range <= L2_CACHE_ENTRY_LIMIT ||
+                        ctx.max_key_range == 0;  // 0 表示未知，允许尝试
+             }},
+            // V27: Hash 聚合 (通用回退)
+            {"V27", 2.0, 0, 0,
+             [](TPCHDataLoader& l) { ops_v27::run_q11_v27(l); },
+             nullptr}  // 无限制
         };
         config.fallback = queries::run_q11;
 
@@ -507,12 +630,27 @@ void register_tpch_query_configs() {
     }
 
     // ========================================================================
-    // Q12: 运输方式统计 - 2 表 JOIN (使用 DuckDB)
-    // 分析: DuckDB 的 Hash Join 对此查询已高度优化
-    // 所有 ThunderDuck 版本 (V25, V27, Base) 均慢于 DuckDB
-    // 决策: 不注册 ThunderDuck 实现，直接使用 DuckDB
+    // Q12: 运输方式统计 - 2 表 JOIN (V57 SIMD Branchless)
+    // 分析: V57 使用 ZeroCostBranchlessFilter 解决分支预测问题
+    // 之前的问题: 4 个过滤条件导致分支预测失败
+    // V57 方案: SIMD 批量处理 + 无分支掩码合并
     // ========================================================================
-    // Q12 不注册 - 自动回退到 DuckDB
+    {
+        QueryOperatorConfig config;
+        config.query_id = "Q12";
+        config.description = "Shipping Modes (SIMD Branchless Filter)";
+        config.estimated_rows = 6000000;
+        config.join_count = 1;
+        config.has_aggregation = true;
+
+        config.candidates = {
+            {"V57", 1.2, 0, 0, [](TPCHDataLoader& l) { ops_v57::run_q12_v57(l); }},
+            {"V27", 0.9, 0, 0, [](TPCHDataLoader& l) { ops_v27::run_q12_v27(l); }}
+        };
+        config.fallback = queries::run_q12;
+
+        opt.register_query(config);
+    }
 
     // ========================================================================
     // Q13: 客户订单分布 - 2 表 LEFT OUTER JOIN (1.96x V34)
@@ -545,8 +683,24 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            {"V46", 2.91, 0, 0, [](TPCHDataLoader& l) { ops_v46::run_q14_v46(l); }},
-            {"V25", 1.8, 0, 0, [](TPCHDataLoader& l) { ops_v25::run_q14_v25(l); }}
+            // V46: DirectArray 聚合 (O(1) 查找)
+            // 适用性: partkey 范围需要适合 L2 缓存
+            {"V46", 2.91, 0, 0,
+             [](TPCHDataLoader& l) { ops_v46::run_q14_v46(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // DirectArray 适用于 partkey (SF=1 时 ~200K)
+                 // partkey 范围通常较小，适合 DirectArray
+                 constexpr size_t L2_CACHE_ENTRY_LIMIT = 250000;
+                 return ctx.max_key_range <= L2_CACHE_ENTRY_LIMIT ||
+                        ctx.max_key_range == 0;
+             }},
+            // V25: Hash 聚合 (大 key 范围回退)
+            {"V25", 1.8, 0, 0,
+             [](TPCHDataLoader& l) { ops_v25::run_q14_v25(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // 当 DirectArray 不适用时使用 Hash
+                 return ctx.max_key_range > 250000;
+             }}
         };
         config.fallback = queries::run_q14;
 
@@ -594,8 +748,8 @@ void register_tpch_query_configs() {
     }
 
     // ========================================================================
-    // Q17: 小订单收入 - 2 表 JOIN (V43: 专用位图两阶段聚合)
-    // 注: V56 测试结果 0.57x，V43 3x+ 更优
+    // Q17: 小订单收入 - 2 表 JOIN (V57: 零开销通用算子)
+    // 注: V56 测试结果 0.57x，V57 2.9x 更优
     // ========================================================================
     {
         QueryOperatorConfig config;
@@ -608,9 +762,21 @@ void register_tpch_query_configs() {
 
         config.candidates = {
             // V57: 零开销通用算子 (通用设计，无专用代码)
-            {"V57", 2.90, 0, 0, [](TPCHDataLoader& l) { ops_v57::run_q17_v57(l); }},
-            // V36: 基础版本
-            {"V36", 1.16, 0, 0, [](TPCHDataLoader& l) { ops_v36::run_q17_v36(l); }}
+            // 适用性: partkey 范围适合 DirectArray (< 250K)
+            {"V57", 2.90, 0, 0,
+             [](TPCHDataLoader& l) { ops_v57::run_q17_v57(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V57 使用 DirectArray，需要 key 范围适合 L2 缓存
+                 constexpr size_t L2_CACHE_ENTRY_LIMIT = 250000;
+                 return ctx.max_key_range <= L2_CACHE_ENTRY_LIMIT ||
+                        ctx.max_key_range == 0;  // 0 表示未知
+             }},
+            // V36: SubqueryDecorrelation (大 key 范围回退)
+            {"V36", 1.16, 0, 0,
+             [](TPCHDataLoader& l) { ops_v36::run_q17_v36(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.max_key_range > 250000;
+             }}
         };
         config.fallback = [](TPCHDataLoader& l) { ops_v36::run_q17_v36(l); };
 
@@ -631,8 +797,20 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
-            {"V32", 4.27, 0, 0, [](TPCHDataLoader& l) { ops_v32::run_q18_v32(l); }},
-            {"V25", 2.0, 0, 0, [](TPCHDataLoader& l) { ops_v25::run_q18_v25(l); }}
+            // V32: CompactHash + Bloom Filter + 8 路并行预取
+            // 适用性: 大数据量时 Hash 开销可接受，Bloom 过滤效果好
+            {"V32", 4.27, 0, 0,
+             [](TPCHDataLoader& l) { ops_v32::run_q18_v32(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // V32 CompactHash 适合大规模数据
+                 return ctx.row_count >= 100000;
+             }},
+            // V25: 较轻量的 Hash 实现 (小数据量)
+            {"V25", 2.0, 0, 0,
+             [](TPCHDataLoader& l) { ops_v25::run_q18_v25(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count < 100000;
+             }}
         };
         config.fallback = queries::run_q18;
 
@@ -692,9 +870,25 @@ void register_tpch_query_configs() {
 
         config.candidates = {
             // V51 最优: ParallelRadixSort - 两级基数排序 + 单遍 EXISTS 分析
-            {"V51", 1.5, 0, 0, [](TPCHDataLoader& l) { ops_v51::run_q21_v51(l); }},
-            {"V50", 1.2, 0, 0, [](TPCHDataLoader& l) { ops_v50::run_q21_v50(l); }},
-            {"V48", 1.0, 0, 0, [](TPCHDataLoader& l) { ops_v48::run_q21_v48(l); }}
+            // 适用性: 大数据量时并行基数排序优势明显
+            {"V51", 1.5, 0, 0,
+             [](TPCHDataLoader& l) { ops_v51::run_q21_v51(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // ParallelRadixSort 需要足够数据量
+                 return ctx.row_count >= 100000;
+             }},
+            // V50: HybridExecutor (中等数据量)
+            {"V50", 1.2, 0, 0,
+             [](TPCHDataLoader& l) { ops_v50::run_q21_v50(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 50000 && ctx.row_count < 100000;
+             }},
+            // V48: 基础优化 (小数据量)
+            {"V48", 1.0, 0, 0,
+             [](TPCHDataLoader& l) { ops_v48::run_q21_v48(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count < 50000;
+             }}
         };
         config.fallback = [](TPCHDataLoader& l) { ops_v48::run_q21_v48(l); };
 
@@ -714,7 +908,16 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
-            {"V37", 9.08, 0, 0, [](TPCHDataLoader& l) { ops_v37::run_q22_v37(l); }}
+            // V37: Bitmap Anti-Join (O(1) 存在性测试)
+            // 适用性: orderkey 范围适合 Bitmap (custkey 通常较小)
+            {"V37", 9.08, 0, 0,
+             [](TPCHDataLoader& l) { ops_v37::run_q22_v37(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 // Bitmap Anti-Join 适用条件:
+                 // orderkey 范围可以用 Bitmap 高效存储
+                 // 对于 ANTI JOIN，Bitmap 几乎总是最优选择
+                 return ctx.row_count >= 1000;  // 最小数据量阈值
+             }}
         };
         config.fallback = [](TPCHDataLoader& l) { ops_v37::run_q22_v37(l); };
 
@@ -775,36 +978,40 @@ std::vector<TPCHQueryOptimizer::VersionPerformance> TPCHQueryOptimizer::get_all_
 
 SelectionResult TPCHQueryOptimizer::select_adaptive(
     const std::string& query_id,
-    size_t actual_rows,
+    const QueryOperatorConfig::ApplicabilityContext& ctx,
     const QueryOperatorConfig& config
 ) const {
     SelectionResult result;
     result.strategy_used = SelectionStrategy::ADAPTIVE;
 
-    // 收集所有候选版本
+    // 收集所有适用的候选版本
     std::vector<std::string> candidates;
     for (const auto& c : config.candidates) {
-        if (actual_rows >= c.min_rows &&
-            (c.max_rows == 0 || actual_rows <= c.max_rows)) {
-            candidates.push_back(c.version);
-        }
+        // 检查行数范围
+        if (ctx.row_count < c.min_rows) continue;
+        if (c.max_rows > 0 && ctx.row_count > c.max_rows) continue;
+
+        // 检查适用性函数 (如果提供)
+        if (c.is_applicable && !c.is_applicable(ctx)) continue;
+
+        candidates.push_back(c.version);
     }
 
     if (candidates.empty()) {
         result.selected_version = "Fallback";
         result.executor = config.fallback;
         result.confidence = 0.5;
-        result.selection_reason = "No candidates for row count";
+        result.selection_reason = "No candidates for context";
         return result;
     }
 
     // 使用系统表选择最优版本
     auto [best_version, predicted_time] =
-        catalog::catalog().select_best_version(query_id, actual_rows, candidates);
+        catalog::catalog().select_best_version(query_id, ctx.row_count, candidates);
 
     if (best_version.empty()) {
         // 没有历史数据，回退到静态选择
-        return select_static(query_id, actual_rows, config);
+        return select_static(query_id, ctx, config);
     }
 
     // 查找对应的执行器
@@ -836,14 +1043,14 @@ SelectionResult TPCHQueryOptimizer::select_adaptive(
 
 SelectionResult TPCHQueryOptimizer::select_hybrid(
     const std::string& query_id,
-    size_t actual_rows,
+    const QueryOperatorConfig::ApplicabilityContext& ctx,
     const QueryOperatorConfig& config
 ) const {
     SelectionResult result;
     result.strategy_used = SelectionStrategy::HYBRID;
 
     // 首先尝试自适应选择
-    auto adaptive_result = select_adaptive(query_id, actual_rows, config);
+    auto adaptive_result = select_adaptive(query_id, ctx, config);
 
     // 如果置信度足够高，使用自适应结果
     constexpr double CONFIDENCE_THRESHOLD = 0.7;
@@ -856,7 +1063,7 @@ SelectionResult TPCHQueryOptimizer::select_hybrid(
     }
 
     // 否则，混合静态配置
-    auto static_result = select_static(query_id, actual_rows, config);
+    auto static_result = select_static(query_id, ctx, config);
 
     // 如果有历史数据但置信度低，加权混合
     if (adaptive_result.predicted_time_ms > 0 && !adaptive_result.selected_version.empty()) {

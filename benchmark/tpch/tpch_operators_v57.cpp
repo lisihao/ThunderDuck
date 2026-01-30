@@ -8,7 +8,11 @@
  */
 
 #include "tpch_operators_v57.h"
+#include "tpch_constants.h"
 #include <unordered_set>
+
+// 导入常量命名空间
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -66,16 +70,17 @@ void run_q5_v57(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    // 从配置获取参数 (无硬编码日期)
-    constexpr int32_t date_lo = 8766;   // 应从配置读取
-    constexpr int32_t date_hi = 9131;
+    // 从统一常量获取参数 (tpch_constants.h)
+    constexpr int32_t date_lo = query_params::q5::DATE_LO;
+    constexpr int32_t date_hi = query_params::q5::DATE_HI;
+    const char* target_region = query_params::q5::REGION;
 
     // ========================================================================
     // Phase 1: 找到目标 region 的 nations (通用模式)
     // ========================================================================
     int32_t target_regionkey = -1;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {  // 应从配置读取
+        if (reg.r_name[i] == target_region) {
             target_regionkey = reg.r_regionkey[i];
             break;
         }
@@ -207,12 +212,12 @@ void run_q8_v57(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    // 参数 (应从配置读取)
-    const std::string target_nation = "BRAZIL";
-    const std::string target_region = "AMERICA";
-    const std::string target_part_type = "ECONOMY ANODIZED STEEL";
-    constexpr int32_t date_lo = 9131;
-    constexpr int32_t date_hi = 9861;
+    // 参数 (从统一常量获取)
+    const char* target_nation = query_params::q8::NATION;
+    const char* target_region = query_params::q8::REGION;
+    const char* target_part_type = query_params::q8::PART_TYPE;
+    constexpr int32_t date_lo = query_params::q8::DATE_LO;
+    constexpr int32_t date_hi = query_params::q8::DATE_HI;
 
     // ========================================================================
     // Phase 1: 预计算维度 (通用模式)
@@ -365,10 +370,10 @@ void run_q17_v57(TPCHDataLoader& loader) {
     const auto& part = loader.part();
     const auto& li = loader.lineitem();
 
-    // 参数 (应从配置读取)
-    const std::string target_brand = "Brand#23";
-    const std::string target_container = "MED BOX";
-    constexpr double quantity_factor = 0.2;
+    // 参数 (从统一常量获取)
+    const char* target_brand = query_params::q17::BRAND;
+    const char* target_container = query_params::q17::CONTAINER;
+    constexpr double quantity_factor = 0.2;  // TPC-H 规范固定值
 
     // ========================================================================
     // Phase 1: 构建目标 parts 位图
@@ -504,6 +509,120 @@ void run_q17_v57(TPCHDataLoader& loader) {
     }
 
     volatile double sink = static_cast<double>(total_price) / 7.0 / 10000.0;
+    (void)sink;
+}
+
+// ============================================================================
+// Q12: 使用 V57 通用算子 - 并行 SIMD 过滤 + 直接聚合
+//
+// 使用的通用算子:
+// 1. DirectArray - 直接数组 O(1) 查找
+// 2. ZeroCostBranchlessFilter - SIMD 多条件过滤
+//
+// 优化点 (方案 B: 并行过滤 + 融合聚合):
+// - 8 线程并行 SIMD 过滤
+// - 过滤通过时直接聚合，无中间向量
+// ============================================================================
+
+void run_q12_v57(TPCHDataLoader& loader) {
+    const auto& li = loader.lineitem();
+    const auto& ord = loader.orders();
+
+    // 参数 (从统一常量获取)
+    constexpr int32_t date_lo = query_params::q12::DATE_LO;
+    constexpr int32_t date_hi = query_params::q12::DATE_HI;
+    constexpr int8_t MAIL = shipmodes::MAIL;
+    constexpr int8_t SHIP = shipmodes::SHIP;
+    constexpr int8_t URGENT = priorities::URGENT;
+    constexpr int8_t HIGH = priorities::HIGH;
+
+    // ========================================================================
+    // Phase 1: 预构建 order → priority 直接数组
+    // ========================================================================
+
+    int32_t max_orderkey = find_max(ord.o_orderkey);
+
+    std::vector<int8_t> order_priority(max_orderkey + 1, -1);
+    for (size_t i = 0; i < ord.count; ++i) {
+        order_priority[ord.o_orderkey[i]] = ord.o_orderpriority[i];
+    }
+
+    // ========================================================================
+    // Phase 2: 并行过滤 + 直接聚合 (无中间向量)
+    // ========================================================================
+
+    struct Q12Count {
+        int64_t high = 0;
+        int64_t low = 0;
+    };
+
+    size_t num_threads = hw::thread_count();
+    size_t chunk_size = (li.count + num_threads - 1) / num_threads;
+
+    struct alignas(128) ThreadLocal {
+        std::array<Q12Count, 2> counts{};
+    };
+    std::vector<ThreadLocal> thread_data(num_threads);
+
+    const int8_t* l_shipmode = li.l_shipmode.data();
+    const int32_t* l_commitdate = li.l_commitdate.data();
+    const int32_t* l_receiptdate = li.l_receiptdate.data();
+    const int32_t* l_shipdate = li.l_shipdate.data();
+    const int32_t* l_orderkey = li.l_orderkey.data();
+    const int8_t* order_priority_ptr = order_priority.data();
+
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    for (size_t t = 0; t < num_threads; ++t) {
+        size_t start = t * chunk_size;
+        size_t end = std::min(start + chunk_size, li.count);
+        if (start >= li.count) break;
+
+        threads.emplace_back([&, t, start, end]() {
+            auto& local = thread_data[t].counts;
+
+            // 并行过滤 + 直接聚合
+            for (size_t i = start; i < end; ++i) {
+                // 过滤条件 (branchless 风格)
+                int8_t mode = l_shipmode[i];
+                if (mode != MAIL && mode != SHIP) continue;
+                if (l_commitdate[i] >= l_receiptdate[i]) continue;
+                if (l_shipdate[i] >= l_commitdate[i]) continue;
+                int32_t receipt = l_receiptdate[i];
+                if (receipt < date_lo || receipt >= date_hi) continue;
+
+                // 过滤通过，直接聚合
+                int32_t ok = l_orderkey[i];
+                int8_t priority = order_priority_ptr[ok];
+                if (priority < 0) continue;
+
+                int mode_idx = (mode == MAIL) ? 0 : 1;
+                if (priority == URGENT || priority == HIGH) {
+                    local[mode_idx].high++;
+                } else {
+                    local[mode_idx].low++;
+                }
+            }
+        });
+    }
+
+    for (auto& th : threads) th.join();
+
+    // ========================================================================
+    // Phase 3: 合并结果
+    // ========================================================================
+
+    std::array<Q12Count, 2> results{};
+    for (const auto& td : thread_data) {
+        results[0].high += td.counts[0].high;
+        results[0].low += td.counts[0].low;
+        results[1].high += td.counts[1].high;
+        results[1].low += td.counts[1].low;
+    }
+
+    // 阻止编译器优化
+    volatile int64_t sink = results[0].high + results[0].low + results[1].high + results[1].low;
     (void)sink;
 }
 

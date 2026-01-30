@@ -19,6 +19,9 @@
 // DuckDB 头文件
 #include "duckdb.hpp"
 
+// 统一常量定义
+#include "tpch_constants.h"
+
 namespace thunderduck {
 namespace tpch {
 
@@ -39,11 +42,16 @@ struct LineitemColumns {
     std::vector<int32_t> l_suppkey;       // 供应商键
     std::vector<int32_t> l_linenumber;    // 行号
 
-    // 数值列 (定点数 x10000)
+    // 数值列 (定点数 x10000) - 保持兼容性
     std::vector<int64_t> l_quantity;       // 数量 (x10000)
     std::vector<int64_t> l_extendedprice;  // 扩展价格 (x10000)
     std::vector<int64_t> l_discount;       // 折扣 (x10000, 0.00-0.10)
     std::vector<int64_t> l_tax;            // 税率 (x10000)
+
+    // 数值列 (原生 double) - V54+ SIMD 优化使用
+    std::vector<double> l_quantity_d;       // 数量 (原生 double)
+    std::vector<double> l_extendedprice_d;  // 扩展价格 (原生 double)
+    std::vector<double> l_discount_d;       // 折扣 (原生 double)
 
     // 日期列 (epoch days)
     std::vector<int32_t> l_shipdate;       // 发货日期
@@ -276,29 +284,33 @@ std::string epoch_days_to_date(int32_t days);
 
 /**
  * 常用日期常量 (epoch days)
+ *
+ * 向后兼容别名 - 实际定义在 tpch_constants.h
  */
 namespace dates {
-    // Q1: 1998-12-01 - 90 days
-    constexpr int32_t Q1_THRESHOLD = 10471;  // 1998-09-02
+    using namespace constants::dates;
+
+    // Q1: 1998-12-01 - 90 days = 1998-09-02
+    constexpr int32_t Q1_THRESHOLD = constants::query_params::q1::SHIP_DATE_THRESHOLD;
 
     // Q6: 1994-01-01 to 1995-01-01
-    constexpr int32_t Q6_DATE_LO = 8766;     // 1994-01-01
-    constexpr int32_t Q6_DATE_HI = 9131;     // 1995-01-01
+    constexpr int32_t Q6_DATE_LO = constants::query_params::q6::DATE_LO;
+    constexpr int32_t Q6_DATE_HI = constants::query_params::q6::DATE_HI;
 
     // Q3: 1995-03-15
-    constexpr int32_t Q3_DATE = 9204;        // 1995-03-15
+    constexpr int32_t Q3_DATE = constants::query_params::q3::ORDER_DATE_THRESHOLD;
 
-    // Q5/Q7/Q10/Q12 等使用的其他日期
-    constexpr int32_t DATE_1993_07_01 = 8582;
-    constexpr int32_t DATE_1993_10_01 = 8674;
-    constexpr int32_t DATE_1994_01_01 = 8766;
-    constexpr int32_t DATE_1995_01_01 = 9131;
-    constexpr int32_t DATE_1995_09_01 = 9374;
-    constexpr int32_t DATE_1995_10_01 = 9404;
-    constexpr int32_t DATE_1996_01_01 = 9497;
-    constexpr int32_t DATE_1996_04_01 = 9588;
-    constexpr int32_t DATE_1996_12_31 = 9862;
-    constexpr int32_t DATE_1998_12_01 = 10561;
+    // 通用日期常量别名 (向后兼容)
+    constexpr int32_t DATE_1993_07_01 = D1993_07_01;
+    constexpr int32_t DATE_1993_10_01 = D1993_10_01;
+    constexpr int32_t DATE_1994_01_01 = D1994_01_01;
+    constexpr int32_t DATE_1995_01_01 = D1995_01_01;
+    constexpr int32_t DATE_1995_09_01 = D1995_09_01;
+    constexpr int32_t DATE_1995_10_01 = D1995_10_01;
+    constexpr int32_t DATE_1996_01_01 = D1996_01_01;
+    constexpr int32_t DATE_1996_04_01 = D1996_04_01;
+    constexpr int32_t DATE_1996_12_31 = D1996_12_31;
+    constexpr int32_t DATE_1998_12_01 = D1998_12_01;
 }
 
 // ============================================================================

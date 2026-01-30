@@ -8,6 +8,7 @@
 
 #include "tpch_operators_v24.h"
 #include "tpch_data_loader.h"
+#include "tpch_constants.h"
 #include "thunderduck/memory.h"
 #include "thunderduck/join.h"
 #include <cstring>
@@ -19,6 +20,8 @@
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -452,7 +455,7 @@ void run_q3_v24(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t date_threshold = 9204;  // 1995-03-15
+    constexpr int32_t date_threshold = dates::D1995_03_15;
 
     // ===== Step 1: 构建 BUILDING 客户 custkey hash set =====
     std::unordered_set<int32_t> building_custkeys;
@@ -522,14 +525,14 @@ void run_q5_v24(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    constexpr int32_t date_lo = 8766;   // 1994-01-01
-    constexpr int32_t date_hi = 9131;   // 1995-01-01
+    constexpr int32_t date_lo = dates::D1994_01_01;
+    constexpr int32_t date_hi = dates::D1995_01_01;
 
     // ===== Step 1: 构建 ASIA nation 映射 =====
     std::unordered_set<int32_t> asia_nation_set;
     std::unordered_map<int32_t, std::string> nation_names;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {
+        if (reg.r_name[i] == regions::ASIA) {
             int32_t asia_rk = reg.r_regionkey[i];
             for (size_t j = 0; j < nat.count; ++j) {
                 if (nat.n_regionkey[j] == asia_rk) {
@@ -603,8 +606,8 @@ void run_q6_v24(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     size_t n = li.count;
 
-    constexpr int32_t date_lo = 8766;   // 1994-01-01
-    constexpr int32_t date_hi = 9131;   // 1995-01-01
+    constexpr int32_t date_lo = dates::D1994_01_01;
+    constexpr int32_t date_hi = dates::D1995_01_01;
     constexpr int64_t disc_lo = 500;
     constexpr int64_t disc_hi = 700;
     constexpr int64_t qty_hi = 240000;

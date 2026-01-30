@@ -117,6 +117,10 @@ void TPCHDataLoader::extract_lineitem() {
     lineitem_.l_extendedprice.resize(n);
     lineitem_.l_discount.resize(n);
     lineitem_.l_tax.resize(n);
+    // V54+ 原生 double 列
+    lineitem_.l_quantity_d.resize(n);
+    lineitem_.l_extendedprice_d.resize(n);
+    lineitem_.l_discount_d.resize(n);
     lineitem_.l_shipdate.resize(n);
     lineitem_.l_commitdate.resize(n);
     lineitem_.l_receiptdate.resize(n);
@@ -137,11 +141,22 @@ void TPCHDataLoader::extract_lineitem() {
         lineitem_.l_suppkey[i] = result->GetValue(2, i).GetValue<int32_t>();
         lineitem_.l_linenumber[i] = result->GetValue(3, i).GetValue<int32_t>();
 
-        // 转换为定点数
-        lineitem_.l_quantity[i] = to_fixed(result->GetValue(4, i).GetValue<double>());
-        lineitem_.l_extendedprice[i] = to_fixed(result->GetValue(5, i).GetValue<double>());
-        lineitem_.l_discount[i] = to_fixed(result->GetValue(6, i).GetValue<double>());
-        lineitem_.l_tax[i] = to_fixed(result->GetValue(7, i).GetValue<double>());
+        // 读取原始 double 值
+        double qty = result->GetValue(4, i).GetValue<double>();
+        double extprice = result->GetValue(5, i).GetValue<double>();
+        double disc = result->GetValue(6, i).GetValue<double>();
+        double tax = result->GetValue(7, i).GetValue<double>();
+
+        // 转换为定点数 (兼容旧代码)
+        lineitem_.l_quantity[i] = to_fixed(qty);
+        lineitem_.l_extendedprice[i] = to_fixed(extprice);
+        lineitem_.l_discount[i] = to_fixed(disc);
+        lineitem_.l_tax[i] = to_fixed(tax);
+
+        // V54+ 原生 double (SIMD 优化)
+        lineitem_.l_quantity_d[i] = qty;
+        lineitem_.l_extendedprice_d[i] = extprice;
+        lineitem_.l_discount_d[i] = disc;
 
         // 日期 (DuckDB 返回 int32_t epoch days)
         lineitem_.l_shipdate[i] = result->GetValue(8, i).GetValue<int32_t>();

@@ -21,6 +21,12 @@ endif()
 # 头文件目录
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+# Homebrew (DuckDB)
+if(APPLE)
+    include_directories(/opt/homebrew/include)
+    link_directories(/opt/homebrew/lib)
+endif()
+
 # 源文件
 file(GLOB_RECURSE CORE_SOURCES "src/core/*.cpp")
 file(GLOB_RECURSE OPERATOR_SOURCES "src/operators/**/*.cpp")
@@ -28,6 +34,7 @@ file(GLOB_RECURSE NPU_SOURCES "src/npu/*.cpp")
 file(GLOB_RECURSE NPU_SOURCES_MM "src/npu/*.mm")  # V19.5: NPU Objective-C++ files
 file(GLOB_RECURSE UTIL_SOURCES "src/utils/*.cpp")
 file(GLOB_RECURSE ASM_SOURCES "src/operators/**/*.S")
+file(GLOB_RECURSE EXTENSION_SOURCES "src/extension/*.cpp")  # DuckDB Extension
 
 # GPU 源文件 (Metal/Objective-C++)
 file(GLOB_RECURSE GPU_SOURCES "src/gpu/*.mm")
@@ -41,10 +48,12 @@ add_library(thunderduck STATIC
     ${UTIL_SOURCES}
     ${ASM_SOURCES}
     ${GPU_SOURCES}
+    ${EXTENSION_SOURCES}
 )
 
 target_include_directories(thunderduck PUBLIC
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/extension
 )
 
 # Apple 框架链接 (Metal, Accelerate, MPS)

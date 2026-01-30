@@ -62,6 +62,19 @@ struct QueryOperatorConfig {
     bool has_aggregation = true;             // 是否有聚合
     bool has_top_n = false;                  // 是否有 TOP-N
 
+    // 算子适用性检查上下文
+    struct ApplicabilityContext {
+        size_t row_count = 0;                // 实际行数
+        size_t max_key_range = 0;            // 最大 key 范围 (用于 DirectArray 适用性)
+        size_t distinct_keys = 0;            // 不同 key 数量 (基数)
+        double selectivity = 1.0;            // 选择率
+        size_t l2_cache_bytes = 4 * 1024 * 1024;  // L2 缓存大小
+        bool has_native_double = false;      // 是否有原生 double 列
+    };
+
+    // 适用性检查函数类型
+    using ApplicabilityChecker = std::function<bool(const ApplicabilityContext&)>;
+
     // 版本候选 (按优先级排序)
     struct VersionCandidate {
         std::string version;                 // 版本号 (V25, V32, V37...)
@@ -69,6 +82,7 @@ struct QueryOperatorConfig {
         size_t min_rows;                     // 最小适用行数
         size_t max_rows;                     // 最大适用行数 (0 = 无限)
         QueryExecutor executor;              // 执行函数
+        ApplicabilityChecker is_applicable;  // 适用性检查 (可选)
     };
     std::vector<VersionCandidate> candidates;
 
@@ -141,16 +155,40 @@ public:
         const std::string& query_id,
         size_t actual_rows
     ) const {
-        auto result = select_with_details(query_id, actual_rows);
+        QueryOperatorConfig::ApplicabilityContext ctx;
+        ctx.row_count = actual_rows;
+        return select_best_executor(query_id, ctx);
+    }
+
+    /**
+     * 根据完整上下文选择最优执行器
+     */
+    QueryExecutor select_best_executor(
+        const std::string& query_id,
+        const QueryOperatorConfig::ApplicabilityContext& ctx
+    ) const {
+        auto result = select_with_details(query_id, ctx);
         return result.executor;
     }
 
     /**
-     * 选择最优版本并返回详细信息
+     * 选择最优版本并返回详细信息 (简化版)
      */
     SelectionResult select_with_details(
         const std::string& query_id,
         size_t actual_rows
+    ) const {
+        QueryOperatorConfig::ApplicabilityContext ctx;
+        ctx.row_count = actual_rows;
+        return select_with_details(query_id, ctx);
+    }
+
+    /**
+     * 选择最优版本并返回详细信息 (完整上下文)
+     */
+    SelectionResult select_with_details(
+        const std::string& query_id,
+        const QueryOperatorConfig::ApplicabilityContext& ctx
     ) const {
         SelectionResult result;
         result.strategy_used = strategy_;
@@ -166,14 +204,14 @@ public:
         // 根据策略选择
         switch (strategy_) {
             case SelectionStrategy::ADAPTIVE:
-                return select_adaptive(query_id, actual_rows, config);
+                return select_adaptive(query_id, ctx, config);
 
             case SelectionStrategy::HYBRID:
-                return select_hybrid(query_id, actual_rows, config);
+                return select_hybrid(query_id, ctx, config);
 
             case SelectionStrategy::STATIC:
             default:
-                return select_static(query_id, actual_rows, config);
+                return select_static(query_id, ctx, config);
         }
     }
 
@@ -288,10 +326,10 @@ public:
 private:
     TPCHQueryOptimizer() : strategy_(SelectionStrategy::STATIC), logging_enabled_(false) {}
 
-    // 静态选择 (基于预设加速比)
+    // 静态选择 (基于预设加速比 + 适用性检查)
     SelectionResult select_static(
         const std::string& query_id,
-        size_t actual_rows,
+        const QueryOperatorConfig::ApplicabilityContext& ctx,
         const QueryOperatorConfig& config
     ) const {
         SelectionResult result;
@@ -301,8 +339,14 @@ private:
         double best_speedup = 0.0;
 
         for (const auto& candidate : config.candidates) {
-            if (actual_rows < candidate.min_rows) continue;
-            if (candidate.max_rows > 0 && actual_rows > candidate.max_rows) continue;
+            // 检查行数范围
+            if (ctx.row_count < candidate.min_rows) continue;
+            if (candidate.max_rows > 0 && ctx.row_count > candidate.max_rows) continue;
+
+            // 检查适用性函数 (如果提供)
+            if (candidate.is_applicable && !candidate.is_applicable(ctx)) {
+                continue;  // 算子不适用于当前上下文
+            }
 
             if (candidate.speedup > best_speedup) {
                 best_speedup = candidate.speedup;
@@ -333,14 +377,14 @@ private:
     // 自适应选择 (基于历史数据)
     SelectionResult select_adaptive(
         const std::string& query_id,
-        size_t actual_rows,
+        const QueryOperatorConfig::ApplicabilityContext& ctx,
         const QueryOperatorConfig& config
     ) const;
 
     // 混合选择 (历史数据 + 静态配置)
     SelectionResult select_hybrid(
         const std::string& query_id,
-        size_t actual_rows,
+        const QueryOperatorConfig::ApplicabilityContext& ctx,
         const QueryOperatorConfig& config
     ) const;
 

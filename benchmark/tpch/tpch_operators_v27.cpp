@@ -12,12 +12,14 @@
 
 #include "tpch_operators_v27.h"
 #include "thunderduck/bloom_filter.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <future>
 #include <unordered_set>
 #include <unordered_map>
 
 using thunderduck::bloom::BloomFilter;
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -31,9 +33,9 @@ void run_q4_v27(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& li = loader.lineitem();
 
-    // 日期范围: 1993-07-01 to 1993-10-01
-    constexpr int32_t date_lo = 8582;   // 1993-07-01
-    constexpr int32_t date_hi = 8674;   // 1993-10-01
+    // 日期范围 (从统一常量获取)
+    constexpr int32_t date_lo = query_params::q4::DATE_LO;
+    constexpr int32_t date_hi = query_params::q4::DATE_HI;
 
     // Step 1: 找到 max orderkey 用于 bitmap 大小
     int32_t max_orderkey = 0;
@@ -128,7 +130,7 @@ void run_q11_v27(TPCHDataLoader& loader) {
     // Step 1: 找到 GERMANY nationkey
     int32_t germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "GERMANY") {
+        if (nat.n_name[i] == nations::GERMANY) {
             germany_key = nat.n_nationkey[i];
             break;
         }
@@ -459,7 +461,7 @@ void run_q3_v27(TPCHDataLoader& loader) {
     const auto& cust = loader.customer();
 
     // 日期阈值: 1995-03-15
-    constexpr int32_t date_threshold = 9204;  // 1995-03-15 as epoch days
+    constexpr int32_t date_threshold = dates::D1995_03_15;
 
     // ========================================================================
     // Step 1: 构建 BUILDING 客户 custkey bitmap
@@ -768,17 +770,13 @@ void run_q12_v27(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     const auto& ord = loader.orders();
 
-    // 日期范围: 1994-01-01 to 1995-01-01
-    constexpr int32_t date_lo = 8766;   // 1994-01-01
-    constexpr int32_t date_hi = 9131;   // 1995-01-01
-
-    // shipmode: MAIL=5, SHIP=3
-    constexpr int8_t MAIL = 5;
-    constexpr int8_t SHIP = 3;
-
-    // orderpriority: 1-URGENT=0, 2-HIGH=1
-    constexpr int8_t URGENT = 0;
-    constexpr int8_t HIGH = 1;
+    // 参数 (从统一常量获取)
+    constexpr int32_t date_lo = query_params::q12::DATE_LO;
+    constexpr int32_t date_hi = query_params::q12::DATE_HI;
+    constexpr int8_t MAIL = shipmodes::MAIL;
+    constexpr int8_t SHIP = shipmodes::SHIP;
+    constexpr int8_t URGENT = priorities::URGENT;
+    constexpr int8_t HIGH = priorities::HIGH;
 
     // ========================================================================
     // Step 1: 预构建 order 信息数组 (orderkey → orderpriority)
@@ -890,16 +888,16 @@ void run_q7_v27(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
 
     // 日期范围: 1995-01-01 to 1996-12-31
-    constexpr int32_t date_lo = 9131;   // 1995-01-01
-    constexpr int32_t date_hi = 9861;   // 1996-12-31
+    constexpr int32_t date_lo = dates::D1995_01_01;
+    constexpr int32_t date_hi = dates::D1996_12_31;
 
     // ========================================================================
     // Step 1: 找到 FRANCE 和 GERMANY 的 nationkey
     // ========================================================================
     int32_t france_key = -1, germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "FRANCE") france_key = nat.n_nationkey[i];
-        if (nat.n_name[i] == "GERMANY") germany_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::FRANCE) france_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::GERMANY) germany_key = nat.n_nationkey[i];
     }
 
     // ========================================================================
@@ -1007,7 +1005,7 @@ void run_q7_v27(TPCHDataLoader& loader) {
                 if (s_nat == c_nat) continue;  // 同国家不算
 
                 // 计算 year_idx
-                int year_idx = (shipdate >= 9496) ? 1 : 0;  // 1996-01-01 = 9496
+                int year_idx = (shipdate >= dates::D1996_01_01) ? 1 : 0;
 
                 // 计算 revenue
                 int64_t revenue = static_cast<int64_t>(li.l_extendedprice[i]) *
@@ -1049,8 +1047,8 @@ void run_q15_v27(TPCHDataLoader& loader) {
     const auto& supp = loader.supplier();
 
     // 日期范围: 1996-01-01 to 1996-04-01
-    constexpr int32_t date_lo = 9497;   // 1996-01-01
-    constexpr int32_t date_hi = 9588;   // 1996-04-01
+    constexpr int32_t date_lo = dates::D1996_01_01;
+    constexpr int32_t date_hi = dates::D1996_04_01;
 
     // ========================================================================
     // Step 1: 找到 max_suppkey
@@ -1158,7 +1156,7 @@ void run_q3_v28(TPCHDataLoader& loader) {
     const auto& cust = loader.customer();
 
     // 日期阈值: 1995-03-15
-    constexpr int32_t DATE_THRESHOLD = 9204;  // epoch days from 1970-01-01
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 预处理 (延迟初始化)
@@ -1342,7 +1340,7 @@ void run_q3_v28_1(TPCHDataLoader& loader) {
     const auto& cust = loader.customer();
 
     // 日期阈值: 1995-03-15
-    constexpr int32_t DATE_THRESHOLD = 9204;  // epoch days from 1970-01-01
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 预处理 (同 V27)
@@ -1534,7 +1532,7 @@ void run_q3_v29(TPCHDataLoader& loader) {
     const auto& cust = loader.customer();
 
     // 日期阈值: 1995-03-15
-    constexpr int32_t DATE_THRESHOLD = 9204;
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 预处理 - Predicate Bitmap + Bloom Filter + Lookup
@@ -1731,7 +1729,7 @@ void run_q3_v30(TPCHDataLoader& loader) {
     const auto& cust = loader.customer();
 
     // 日期阈值: 1995-03-15
-    constexpr int32_t DATE_THRESHOLD = 9204;
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 极简预处理 - 单遍扫描，最小化开销
@@ -1938,7 +1936,7 @@ void run_q3_v31(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t DATE_THRESHOLD = 9204;
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 构建 BUILDING custkey 集合 (使用 bitmap)
@@ -2133,7 +2131,7 @@ void run_q3_v32(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t DATE_THRESHOLD = 9204;
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 构建 BUILDING custkey 集合 (使用 bitmap)

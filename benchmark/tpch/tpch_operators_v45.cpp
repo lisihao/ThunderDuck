@@ -10,6 +10,7 @@
 #include "tpch_operators_v45.h"
 #include "tpch_operators_v25.h"  // ThreadPool
 #include "tpch_operators_v32.h"  // CompactHashTable
+#include "tpch_constants.h"      // 统一常量定义
 
 #include <algorithm>
 #include <vector>
@@ -20,6 +21,8 @@
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -41,8 +44,8 @@ void run_q14_v45(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     const auto& part = loader.part();
 
-    constexpr int32_t date_lo = 9374;  // 1995-09-01
-    constexpr int32_t date_hi = 9404;  // 1995-10-01
+    constexpr int32_t date_lo = dates::D1995_09_01;
+    constexpr int32_t date_hi = dates::D1995_10_01;
 
     // Phase 1: 构建直接数组 part_is_promo[partkey]
     int32_t max_partkey = 0;
@@ -174,7 +177,7 @@ void run_q11_v45(TPCHDataLoader& loader) {
     // Step 1: 找到 GERMANY nationkey
     int32_t germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "GERMANY") {
+        if (nat.n_name[i] == nations::GERMANY) {
             germany_key = nat.n_nationkey[i];
             break;
         }
@@ -339,13 +342,13 @@ void run_q5_v45(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    constexpr int32_t date_lo = 8766;   // 1994-01-01
-    constexpr int32_t date_hi = 9131;   // 1995-01-01
+    constexpr int32_t date_lo = dates::D1994_01_01;
+    constexpr int32_t date_hi = dates::D1995_01_01;
 
     // Phase 1: 找到 ASIA region 的 nations
     int32_t asia_regionkey = -1;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {
+        if (reg.r_name[i] == regions::ASIA) {
             asia_regionkey = reg.r_regionkey[i];
             break;
         }

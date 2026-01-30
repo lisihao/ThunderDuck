@@ -15,11 +15,14 @@
 
 #include "tpch_operators_v34.h"
 #include "tpch_operators_v25.h"  // ThreadPool
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <numeric>
 #include <cctype>
 #include <future>
 #include <cstring>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -611,8 +614,8 @@ QueryConfig q8_config() {
     QueryConfig cfg;
 
     // 过滤条件
-    cfg.set_string("target_nation", "BRAZIL");
-    cfg.set_string("region", "AMERICA");
+    cfg.set_string("target_nation", nations::BRAZIL);
+    cfg.set_string("region", regions::AMERICA);
     cfg.set_string("part_type", "ECONOMY ANODIZED STEEL");
 
     // 日期范围
@@ -880,8 +883,8 @@ void run_q8_v34(TPCHDataLoader& loader, const QueryConfig& config) {
     DateRange date_range = config.get_date_range("order_date");
 
     // 默认值
-    if (target_nation.empty()) target_nation = "BRAZIL";
-    if (target_region.empty()) target_region = "AMERICA";
+    if (target_nation.empty()) target_nation = nations::BRAZIL;
+    if (target_region.empty()) target_region = regions::AMERICA;
     if (target_part_type.empty()) target_part_type = "ECONOMY ANODIZED STEEL";
     if (date_range.lo == 0) date_range = DateRange::from_string("1995-01-01", "1996-12-31");
 

@@ -31,6 +31,7 @@
 #include "tpch_operators_v47.h"
 #include "tpch_operators_v48.h"
 #include "tpch_operators_v49.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
@@ -41,6 +42,8 @@
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -569,7 +572,7 @@ void run_q5(TPCHDataLoader& loader) {
     std::vector<int32_t> asia_nation_keys;
     std::unordered_set<int32_t> asia_nation_set;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {
+        if (reg.r_name[i] == regions::ASIA) {
             int32_t asia_regionkey = reg.r_regionkey[i];
             for (size_t j = 0; j < nat.count; ++j) {
                 if (nat.n_regionkey[j] == asia_regionkey) {
@@ -797,8 +800,8 @@ void run_q7(TPCHDataLoader& loader) {
     // 找到 FRANCE 和 GERMANY 的 nationkey
     int32_t france_key = -1, germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "FRANCE") france_key = nat.n_nationkey[i];
-        if (nat.n_name[i] == "GERMANY") germany_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::FRANCE) france_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::GERMANY) germany_key = nat.n_nationkey[i];
     }
 
     // Step 1: 过滤 FRANCE/GERMANY 供应商
@@ -1365,7 +1368,7 @@ void run_q2(TPCHDataLoader& loader) {
     // 找到 EUROPE region
     int32_t europe_regionkey = -1;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "EUROPE") {
+        if (reg.r_name[i] == regions::EUROPE) {
             europe_regionkey = reg.r_regionkey[i];
             break;
         }
@@ -1455,7 +1458,7 @@ void run_q11(TPCHDataLoader& loader) {
     // 找到 GERMANY
     int32_t germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "GERMANY") {
+        if (nat.n_name[i] == nations::GERMANY) {
             germany_key = nat.n_nationkey[i];
             break;
         }

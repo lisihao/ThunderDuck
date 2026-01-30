@@ -9,10 +9,13 @@
 
 #include "tpch_operators_v42.h"
 #include "tpch_config_v33.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <thread>
 #include <vector>
 #include <array>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -31,12 +34,12 @@ void run_q8_v42(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    // ========== 参数 ==========
-    const std::string target_nation = "BRAZIL";
-    const std::string target_region = "AMERICA";
-    const std::string target_part_type = "ECONOMY ANODIZED STEEL";
-    const int32_t date_lo = 9131;   // 1995-01-01
-    const int32_t date_hi = 9861;   // 1996-12-31
+    // ========== 参数 (使用统一常量) ==========
+    const std::string target_nation = query_params::q8::NATION;
+    const std::string target_region = query_params::q8::REGION;
+    const std::string target_part_type = query_params::q8::PART_TYPE;
+    const int32_t date_lo = query_params::q8::DATE_LO;
+    const int32_t date_hi = query_params::q8::DATE_HI;
 
     // ========================================================================
     // Phase 1: 预计算查找表

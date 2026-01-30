@@ -4,6 +4,10 @@
  * 核心优化:
  * - Q21: 排序去重替代嵌套 Hash Set
  * - Q20: 紧凑编码 + 预过滤
+ *
+ * @deprecated 专用类命名 (如 Q21OptimizerV2) 已废弃，请使用通用别名:
+ *   - Q21OptimizerV2 → SortDeduplicateJoinOptimizer
+ *   - Q20OptimizerV3 → CompactEncodingOptimizer
  */
 
 #pragma once
@@ -112,6 +116,13 @@ private:
 
 void run_q21_v38(TPCHDataLoader& loader);
 void run_q20_v38(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using SortDeduplicateJoinOptimizer = Q21OptimizerV2;
+using CompactEncodingOptimizer = Q20OptimizerV3;
 
 } // namespace ops_v38
 } // namespace tpch

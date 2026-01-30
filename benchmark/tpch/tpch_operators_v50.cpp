@@ -6,6 +6,7 @@
  */
 
 #include "tpch_operators_v50.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <future>
 #include <cstring>
@@ -13,6 +14,8 @@
 #ifdef __aarch64__
 #include <arm_acle.h>
 #endif
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -271,7 +274,7 @@ void run_q21_v50(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
 
     Q21RewriteOptimizer::Config config;
-    config.target_nation = "SAUDI ARABIA";
+    config.target_nation = nations::SAUDI_ARABIA;
     config.order_status = 0;  // 'F'
     config.limit = 100;
 

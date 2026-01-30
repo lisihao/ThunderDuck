@@ -6,8 +6,11 @@
  */
 
 #include "tpch_operators_v38.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <cstring>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -386,7 +389,7 @@ void run_q21_v38(TPCHDataLoader& loader) {
         nat.n_nationkey.data(),
         nat.n_name,
         nat.count,
-        "SAUDI ARABIA",
+        nations::SAUDI_ARABIA,
         100
     );
 
@@ -402,8 +405,8 @@ void run_q20_v38(TPCHDataLoader& loader) {
     const auto& ps = loader.partsupp();
     const auto& li = loader.lineitem();
 
-    constexpr int32_t DATE_1994_01_01 = 8766;
-    constexpr int32_t DATE_1995_01_01 = 9131;
+    constexpr int32_t DATE_1994_01_01 = dates::D1994_01_01;
+    constexpr int32_t DATE_1995_01_01 = dates::D1995_01_01;
 
     auto result = Q20OptimizerV3::execute(
         supp.s_suppkey.data(),
@@ -426,10 +429,10 @@ void run_q20_v38(TPCHDataLoader& loader) {
         li.l_quantity.data(),
         li.l_shipdate.data(),
         li.count,
-        "forest",
-        "CANADA",
-        DATE_1994_01_01,
-        DATE_1995_01_01,
+        query_params::q20::COLOR_PREFIX,
+        nations::CANADA,
+        dates::D1994_01_01,
+        dates::D1995_01_01,
         0.5
     );
 

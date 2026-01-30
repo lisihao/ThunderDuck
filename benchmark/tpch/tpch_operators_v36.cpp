@@ -5,8 +5,11 @@
  */
 
 #include "tpch_operators_v36.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <cstring>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -372,8 +375,8 @@ void run_q20_v36(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
 
     // 日期常量: 1994-01-01 和 1995-01-01
-    constexpr int32_t DATE_1994_01_01 = 8766;
-    constexpr int32_t DATE_1995_01_01 = 9131;
+    constexpr int32_t DATE_1994_01_01 = dates::D1994_01_01;
+    constexpr int32_t DATE_1995_01_01 = dates::D1995_01_01;
 
     auto result = Q20Optimizer::execute(
         supp.s_suppkey.data(),
@@ -396,10 +399,10 @@ void run_q20_v36(TPCHDataLoader& loader) {
         li.l_quantity.data(),
         li.l_shipdate.data(),
         li.count,
-        "forest",
-        "CANADA",
-        DATE_1994_01_01,
-        DATE_1995_01_01,
+        query_params::q20::COLOR_PREFIX,
+        nations::CANADA,
+        dates::D1994_01_01,
+        dates::D1995_01_01,
         0.5
     );
 

@@ -13,6 +13,7 @@
 #include "tpch_operators_v32.h"
 #include "tpch_operators_v27.h"
 #include "tpch_operators_v25.h"  // ThreadPool
+#include "tpch_constants.h"      // 统一常量定义
 
 #include <algorithm>
 #include <unordered_set>
@@ -25,19 +26,19 @@
 #include <arm_acle.h>
 #endif
 
+// 导入统一常量
+using namespace thunderduck::tpch::constants;
+
 namespace thunderduck {
 namespace tpch {
 namespace ops_v32 {
 
-// ============================================================================
-// 日期常量 (epoch days from 1970-01-01)
-// ============================================================================
-
+// 日期常量别名 (向后兼容，引用 tpch_constants.h)
 namespace dates {
-    constexpr int32_t DATE_1994_01_01 = 8766;
-    constexpr int32_t DATE_1995_01_01 = 9131;
-    constexpr int32_t DATE_1996_01_01 = 9496;
-    constexpr int32_t DATE_1996_12_31 = 9861;
+    constexpr int32_t DATE_1994_01_01 = constants::dates::D1994_01_01;
+    constexpr int32_t DATE_1995_01_01 = constants::dates::D1995_01_01;
+    constexpr int32_t DATE_1996_01_01 = constants::dates::D1996_01_01;
+    constexpr int32_t DATE_1996_12_31 = constants::dates::D1996_12_31;
 }
 
 // ============================================================================
@@ -69,7 +70,7 @@ void run_q5_v32_batch(TPCHDataLoader& loader) {
     // Phase 1: 找到 ASIA region 的 nations
     int32_t asia_regionkey = -1;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {
+        if (reg.r_name[i] == regions::ASIA) {
             asia_regionkey = reg.r_regionkey[i];
             break;
         }
@@ -230,8 +231,8 @@ void run_q7_v32_batch(TPCHDataLoader& loader) {
     // Phase 1: 找到 FRANCE 和 GERMANY
     int32_t france_key = -1, germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "FRANCE") france_key = nat.n_nationkey[i];
-        if (nat.n_name[i] == "GERMANY") germany_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::FRANCE) france_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == nations::GERMANY) germany_key = nat.n_nationkey[i];
     }
 
     // Phase 2: 构建紧凑 Hash Table (无 Bloom Filter)

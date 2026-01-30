@@ -8,6 +8,7 @@
  *
  * @version 24.0
  * @date 2026-01-28
+ * @deprecated 此版本已被通用架构取代，请使用 tpch_generic_operators.h 中的通用算子
  */
 
 #ifndef TPCH_OPERATORS_V24_H
@@ -342,6 +343,18 @@ void run_q6_v24(TPCHDataLoader& loader);
  * Q9 V24 优化版
  */
 void run_q9_v24(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (兼容新架构)
+// ============================================================================
+
+/**
+ * Q3AggregatorV24 → TopNAggregator
+ *
+ * V24 的 Q3AggregatorV24 实现了 Top-N 聚合功能，
+ * 可作为通用 TopNAggregator 的别名使用。
+ */
+using TopNAggregator = Q3AggregatorV24;
 
 } // namespace ops_v24
 } // namespace tpch

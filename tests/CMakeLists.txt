@@ -21,3 +21,8 @@ add_executable(test_framework framework_test.cpp)
 target_include_directories(test_framework PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_framework thunderduck)
 add_test(NAME test_framework COMMAND test_framework)
+
+# Operator Registry Test
+add_executable(test_operator_registry test_operator_registry.cpp)
+target_link_libraries(test_operator_registry thunderduck)
+add_test(NAME test_operator_registry COMMAND test_operator_registry)

@@ -3,6 +3,8 @@
  */
 
 #include "tpch_executor.h"
+#include "tpch_queries.h"
+#include "../../include/thunderduck/system_catalog.h"
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
@@ -618,9 +620,28 @@ QueryResult TPCHExecutor::run_query(const std::string& query_id, bool verbose) {
     // 运行 DuckDB 基线
     result.duckdb_ms = run_duckdb_baseline(query_id);
 
+    // 估算行数 (使用 lineitem 表作为参考)
+    size_t estimated_rows = loader_.lineitem().count;
+
+    // 记录 DuckDB 性能到系统表 (用于后续分析和时间尺度 Sketch)
+    catalog::catalog().record_metric(
+        query_id, "DuckDB-baseline",
+        result.duckdb_ms,
+        estimated_rows
+    );
+
     // 运行 ThunderDuck 优化
+    std::string td_version = "ThunderDuck-default";
     if (has_thunderduck_impl(query_id)) {
         result.thunderduck_ms = run_thunderduck_optimized(query_id);
+        td_version = queries::get_selected_version(query_id);  // 获取优化器选择的版本
+
+        // 记录 ThunderDuck 性能到系统表 (自动写入时间尺度 Sketch)
+        catalog::catalog().record_metric(
+            query_id, td_version,
+            result.thunderduck_ms,
+            estimated_rows
+        );
     } else {
         // 无优化实现，使用 DuckDB 时间
         result.thunderduck_ms = result.duckdb_ms;

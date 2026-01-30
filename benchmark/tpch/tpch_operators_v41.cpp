@@ -8,9 +8,12 @@
  */
 
 #include "tpch_operators_v41.h"
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <cstring>
 #include <unordered_set>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -240,7 +243,7 @@ void run_q21_v41(TPCHDataLoader& loader) {
         nat.n_nationkey.data(),
         nat.n_name,
         nat.count,
-        "SAUDI ARABIA",
+        nations::SAUDI_ARABIA,
         100
     );
 

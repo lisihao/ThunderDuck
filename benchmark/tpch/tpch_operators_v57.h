@@ -535,11 +535,265 @@ public:
 };
 
 // ============================================================================
+// ZeroCostBranchlessFilter - 零开销无分支多条件过滤器
+// ============================================================================
+
+#ifdef __aarch64__
+#include <arm_neon.h>
+#endif
+
+/**
+ * 零开销无分支多条件过滤器
+ *
+ * 设计原则:
+ * 1. Branchless: 所有条件合并为位掩码，消除分支预测失败
+ * 2. SIMD: 批量处理 16 个 int8 或 4 个 int32
+ * 3. 通用性: 使用模板参数，不包含任何查询特定代码
+ *
+ * 适用场景:
+ * - 多条件过滤 (多个独立条件导致分支预测失败)
+ * - 条件涉及多个列
+ * - 分支预测失败是瓶颈
+ */
+class ZeroCostBranchlessFilter {
+public:
+    /**
+     * 通用 4 条件 SIMD 过滤
+     *
+     * 条件模式 (通用):
+     * - int8_col IN (val1, val2)
+     * - int32_col_a < int32_col_b
+     * - int32_col_c < int32_col_a
+     * - int32_col_b >= range_lo AND int32_col_b < range_hi
+     *
+     * @param int8_col     int8 列数据
+     * @param val1, val2   IN 条件的两个值
+     * @param col_a        第一个 int32 列 (用于两个比较)
+     * @param col_b        第二个 int32 列 (用于范围检查)
+     * @param col_c        第三个 int32 列
+     * @param range_lo     范围下界 (包含)
+     * @param range_hi     范围上界 (不包含)
+     * @param count        数据行数
+     * @return 满足所有条件的索引数组
+     */
+    static std::vector<uint32_t> filter_multi_condition(
+        const int8_t* int8_col, int8_t val1, int8_t val2,
+        const int32_t* col_a, const int32_t* col_b, const int32_t* col_c,
+        int32_t range_lo, int32_t range_hi,
+        size_t count)
+    {
+        std::vector<uint32_t> result;
+        result.reserve(count / 50);
+
+#ifdef __aarch64__
+        size_t i = 0;
+
+        int8x16_t v_val1 = vdupq_n_s8(val1);
+        int8x16_t v_val2 = vdupq_n_s8(val2);
+        int32x4_t v_range_lo = vdupq_n_s32(range_lo);
+        int32x4_t v_range_hi = vdupq_n_s32(range_hi);
+
+        for (; i + 16 <= count; i += 16) {
+            __builtin_prefetch(int8_col + i + 64, 0, 0);
+            __builtin_prefetch(col_a + i + 64, 0, 0);
+            __builtin_prefetch(col_b + i + 64, 0, 0);
+            __builtin_prefetch(col_c + i + 64, 0, 0);
+
+            // 条件 1: int8_col IN (val1, val2)
+            int8x16_t vals = vld1q_s8(int8_col + i);
+            uint8x16_t m1 = vorrq_u8(vceqq_s8(vals, v_val1), vceqq_s8(vals, v_val2));
+
+            alignas(16) uint8_t m1_array[16];
+            vst1q_u8(m1_array, m1);
+
+            #define PROCESS_GROUP(G) do { \
+                size_t base = i + (G) * 4; \
+                int32x4_t a = vld1q_s32(col_a + base); \
+                int32x4_t b = vld1q_s32(col_b + base); \
+                int32x4_t c = vld1q_s32(col_c + base); \
+                uint32x4_t m2 = vcltq_s32(a, b); \
+                uint32x4_t m3 = vcltq_s32(c, a); \
+                uint32x4_t m4 = vandq_u32(vcgeq_s32(b, v_range_lo), vcltq_s32(b, v_range_hi)); \
+                uint32x4_t date_mask = vandq_u32(vandq_u32(m2, m3), m4); \
+                uint32x4_t m1_expanded = vcombine_u32( \
+                    vcreate_u32( \
+                        (uint64_t)(m1_array[(G)*4] ? 0xFFFFFFFFu : 0) | \
+                        ((uint64_t)(m1_array[(G)*4+1] ? 0xFFFFFFFFu : 0) << 32) \
+                    ), \
+                    vcreate_u32( \
+                        (uint64_t)(m1_array[(G)*4+2] ? 0xFFFFFFFFu : 0) | \
+                        ((uint64_t)(m1_array[(G)*4+3] ? 0xFFFFFFFFu : 0) << 32) \
+                    ) \
+                ); \
+                uint32x4_t final_mask = vandq_u32(m1_expanded, date_mask); \
+                uint32_t mask_bits[4]; \
+                vst1q_u32(mask_bits, final_mask); \
+                if (mask_bits[0]) result.push_back(static_cast<uint32_t>(base)); \
+                if (mask_bits[1]) result.push_back(static_cast<uint32_t>(base + 1)); \
+                if (mask_bits[2]) result.push_back(static_cast<uint32_t>(base + 2)); \
+                if (mask_bits[3]) result.push_back(static_cast<uint32_t>(base + 3)); \
+            } while(0)
+
+            PROCESS_GROUP(0);
+            PROCESS_GROUP(1);
+            PROCESS_GROUP(2);
+            PROCESS_GROUP(3);
+
+            #undef PROCESS_GROUP
+        }
+
+        // 标量处理剩余元素
+        for (; i < count; ++i) {
+            int8_t v = int8_col[i];
+            if ((v != val1 && v != val2)) continue;
+            if (col_a[i] >= col_b[i]) continue;
+            if (col_c[i] >= col_a[i]) continue;
+            if (col_b[i] < range_lo || col_b[i] >= range_hi) continue;
+            result.push_back(static_cast<uint32_t>(i));
+        }
+
+#else
+        // 非 ARM: 标量 branchless
+        for (size_t i = 0; i < count; ++i) {
+            int8_t v = int8_col[i];
+            uint8_t valid = ((v == val1) | (v == val2)) &
+                           (col_a[i] < col_b[i]) &
+                           (col_c[i] < col_a[i]) &
+                           (col_b[i] >= range_lo) &
+                           (col_b[i] < range_hi);
+            if (valid) {
+                result.push_back(static_cast<uint32_t>(i));
+            }
+        }
+#endif
+
+        return result;
+    }
+
+    /**
+     * 通用模板过滤 (任意条件组合)
+     *
+     * @tparam MaskFn 掩码函数: (index) -> bool
+     */
+    template<typename MaskFn>
+    static std::vector<uint32_t> filter(size_t count, MaskFn&& mask_fn) {
+        std::vector<uint32_t> result;
+        result.reserve(count / 10);
+
+        for (size_t i = 0; i < count; ++i) {
+            if (mask_fn(i)) {
+                result.push_back(static_cast<uint32_t>(i));
+            }
+        }
+
+        return result;
+    }
+};
+
+// ============================================================================
+// FusedFilterAggregate - 融合过滤聚合算子 (消除中间向量)
+// ============================================================================
+
+/**
+ * 融合过滤聚合算子
+ *
+ * 设计原则:
+ * 1. 单次扫描: 过滤和聚合在同一循环完成
+ * 2. 完全并行: 多线程并行处理
+ * 3. 零中间存储: 无需 valid_indices 向量
+ * 4. 通用性: 通过模板参数自定义过滤和聚合逻辑
+ *
+ * 适用场景:
+ * - 过滤后聚合的查询模式
+ * - 中间结果量大但最终聚合结果小
+ */
+class FusedFilterAggregate {
+public:
+    /**
+     * 并行融合过滤聚合
+     *
+     * @tparam FilterFn   过滤函数: (index) -> bool
+     * @tparam AggregateFn 聚合函数: (thread_id, index) -> void
+     * @param count       数据行数
+     * @param filter_fn   过滤谓词
+     * @param aggregate_fn 聚合操作 (应更新线程局部状态)
+     */
+    template<typename FilterFn, typename AggregateFn>
+    static void execute(size_t count, FilterFn&& filter_fn, AggregateFn&& aggregate_fn) {
+        size_t num_threads = hw::thread_count();
+        size_t chunk_size = (count + num_threads - 1) / num_threads;
+
+        std::vector<std::thread> threads;
+        threads.reserve(num_threads);
+
+        for (size_t t = 0; t < num_threads; ++t) {
+            size_t start = t * chunk_size;
+            size_t end = std::min(start + chunk_size, count);
+            if (start >= count) break;
+
+            threads.emplace_back([&, t, start, end]() {
+                for (size_t i = start; i < end; ++i) {
+                    if (filter_fn(i)) {
+                        aggregate_fn(t, i);
+                    }
+                }
+            });
+        }
+
+        for (auto& th : threads) th.join();
+    }
+
+    /**
+     * 带预取的并行融合过滤聚合
+     *
+     * @tparam FilterFn    过滤函数: (index) -> bool
+     * @tparam AggregateFn 聚合函数: (thread_id, index) -> void
+     * @tparam PrefetchFn  预取函数: (index + distance) -> void
+     */
+    template<typename FilterFn, typename AggregateFn, typename PrefetchFn>
+    static void execute_with_prefetch(
+        size_t count,
+        FilterFn&& filter_fn,
+        AggregateFn&& aggregate_fn,
+        PrefetchFn&& prefetch_fn,
+        size_t prefetch_distance = 64)
+    {
+        size_t num_threads = hw::thread_count();
+        size_t chunk_size = (count + num_threads - 1) / num_threads;
+
+        std::vector<std::thread> threads;
+        threads.reserve(num_threads);
+
+        for (size_t t = 0; t < num_threads; ++t) {
+            size_t start = t * chunk_size;
+            size_t end = std::min(start + chunk_size, count);
+            if (start >= count) break;
+
+            threads.emplace_back([&, t, start, end]() {
+                for (size_t i = start; i < end; ++i) {
+                    // 预取
+                    if (i + prefetch_distance < end) {
+                        prefetch_fn(i + prefetch_distance);
+                    }
+
+                    if (filter_fn(i)) {
+                        aggregate_fn(t, i);
+                    }
+                }
+            });
+        }
+
+        for (auto& th : threads) th.join();
+    }
+};
+
+// ============================================================================
 // 通用查询实现 (使用上述算子)
 // ============================================================================
 
 void run_q5_v57(TPCHDataLoader& loader);
 void run_q8_v57(TPCHDataLoader& loader);
+void run_q12_v57(TPCHDataLoader& loader);
 void run_q17_v57(TPCHDataLoader& loader);
 
 // ============================================================================

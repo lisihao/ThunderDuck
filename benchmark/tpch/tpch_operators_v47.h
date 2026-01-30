@@ -21,6 +21,7 @@
 
 #include "tpch_data_loader.h"
 #include "tpch_config_v33.h"
+#include "tpch_constants.h"   // 统一常量
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -364,8 +365,8 @@ struct Q6Config {
 
     Q6Config() {
         // 默认: 1994-01-01 to 1995-01-01, 0.05-0.07, qty < 24
-        date_lo = 8766;     // 1994-01-01
-        date_hi = 9131;     // 1995-01-01
+        date_lo = constants::dates::D1994_01_01;
+        date_hi = constants::dates::D1995_01_01;
         disc_lo = 500;      // 0.05 * 10000
         disc_hi = 700;      // 0.07 * 10000
         qty_hi = 240000;    // 24 * 10000
@@ -403,7 +404,7 @@ inline void run_q13_v47(TPCHDataLoader& loader) {
 struct Q21Config {
     std::string target_nation;  // 目标国家
 
-    Q21Config() : target_nation("SAUDI ARABIA") {}
+    Q21Config() : target_nation(constants::nations::SAUDI_ARABIA) {}
 };
 
 void run_q21_v47(TPCHDataLoader& loader, const Q21Config& config);

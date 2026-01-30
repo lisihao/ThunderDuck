@@ -6,6 +6,9 @@
  * - 使用 SortedGroupByAggregator 进行排序后聚合
  * - 使用 MergeJoinOperator 进行归并连接
  *
+ * @deprecated 专用类命名 (如 Q20OptimizerV5) 已废弃，请使用通用别名:
+ *   - Q20OptimizerV5 → DynamicBitmapFilterOptimizer
+ *
  * @version 40.0
  * @date 2026-01-29
  */
@@ -110,6 +113,12 @@ public:
  * V40 Q20 查询入口
  */
 void run_q20_v40(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using DynamicBitmapFilterOptimizer = Q20OptimizerV5;
 
 } // namespace ops_v40
 } // namespace tpch

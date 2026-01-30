@@ -6,6 +6,13 @@
  * - OrderKeyState 预计算 (Q21)
  * - 复合键 Hash 优化 (Q20)
  * - 批量 SIMD 过滤 (Q17)
+ *
+ * @deprecated 专用类命名 (如 Q22Optimizer) 已废弃，请使用通用别名:
+ *   - Q22Optimizer → BitmapAntiJoinOptimizer
+ *   - Q21Optimizer → OrderKeyStateOptimizer
+ *   - Q20OptimizerV2 → CompositeKeyHashOptimizer
+ *   - Q17OptimizerV2 → BatchSIMDFilterOptimizer
+ *   - Q8Optimizer → MultiTableJoinOptimizer
  */
 
 #pragma once
@@ -335,6 +342,16 @@ void run_q21_v37(TPCHDataLoader& loader);
 void run_q20_v37(TPCHDataLoader& loader);
 void run_q17_v37(TPCHDataLoader& loader);
 void run_q8_v37(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using BitmapAntiJoinOptimizer = Q22Optimizer;
+using OrderKeyStateOptimizer = Q21Optimizer;
+using CompositeKeyHashOptimizer = Q20OptimizerV2;
+using BatchSIMDFilterOptimizer = Q17OptimizerV2;
+using MultiTableJoinOptimizer = Q8Optimizer;
 
 } // namespace ops_v37
 } // namespace tpch

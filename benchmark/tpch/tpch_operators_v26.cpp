@@ -3,9 +3,12 @@
  */
 
 #include "tpch_operators_v26.h"
+#include "tpch_constants.h"
 #include <algorithm>
 #include <thread>
 #include <numeric>
+
+using namespace thunderduck::tpch::constants;
 
 #ifdef __aarch64__
 #include <arm_neon.h>
@@ -313,7 +316,7 @@ void run_q3_v26(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t date_threshold = 9204;  // 1995-03-15
+    constexpr int32_t date_threshold = dates::D1995_03_15;
     const size_t num_threads = ThreadPool::instance().size();
 
     // ===== Step 1: 构建BUILDING客户 hash set =====

@@ -11,6 +11,9 @@
  *   预聚合: 每个 orderkey 的 (total_suppliers, late_suppliers)
  *   条件: total_suppliers > 1 AND late_suppliers == 1
  *
+ * @deprecated 专用类命名 (如 Q21RewriteOptimizer) 已废弃，请使用通用别名:
+ *   - Q21RewriteOptimizer → ExistsRewriteOptimizer
+ *
  * @version 50.0
  * @date 2026-01-29
  */
@@ -19,6 +22,7 @@
 
 #include "tpch_data_loader.h"
 #include "tpch_operators_v25.h"  // ThreadPool
+#include "tpch_constants.h"      // 统一常量
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -54,7 +58,7 @@ using ops_v25::ThreadPool;
 class Q21RewriteOptimizer {
 public:
     struct Config {
-        std::string target_nation = "SAUDI ARABIA";
+        std::string target_nation = constants::nations::SAUDI_ARABIA;
         int8_t order_status = 0;  // 'F'
         size_t limit = 100;
     };
@@ -92,6 +96,12 @@ public:
  * V50 Q21 入口
  */
 void run_q21_v50(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using ExistsRewriteOptimizer = Q21RewriteOptimizer;
 
 } // namespace ops_v50
 } // namespace tpch

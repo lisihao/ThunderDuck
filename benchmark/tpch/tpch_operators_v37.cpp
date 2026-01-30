@@ -3,10 +3,13 @@
  */
 
 #include "tpch_operators_v37.h"
+#include "tpch_constants.h"
 #include <algorithm>
 #include <cstring>
 #include <thread>
 #include <atomic>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -706,7 +709,7 @@ void run_q21_v37(TPCHDataLoader& loader) {
         nat.n_nationkey.data(),
         nat.n_name,
         nat.count,
-        "SAUDI ARABIA",
+        nations::SAUDI_ARABIA,
         100
     );
 
@@ -721,9 +724,6 @@ void run_q20_v37(TPCHDataLoader& loader) {
     const auto& part = loader.part();
     const auto& ps = loader.partsupp();
     const auto& li = loader.lineitem();
-
-    constexpr int32_t DATE_1994_01_01 = 8766;
-    constexpr int32_t DATE_1995_01_01 = 9131;
 
     auto result = Q20OptimizerV2::execute(
         supp.s_suppkey.data(),
@@ -747,9 +747,9 @@ void run_q20_v37(TPCHDataLoader& loader) {
         li.l_shipdate.data(),
         li.count,
         "forest",
-        "CANADA",
-        DATE_1994_01_01,
-        DATE_1995_01_01,
+        nations::CANADA,
+        thunderduck::tpch::constants::dates::D1994_01_01,
+        thunderduck::tpch::constants::dates::D1995_01_01,
         0.5
     );
 
@@ -782,16 +782,13 @@ void run_q17_v37(TPCHDataLoader& loader) {
 }
 
 void run_q8_v37(TPCHDataLoader& loader) {
-    constexpr int32_t DATE_1995_01_01 = 9131;
-    constexpr int32_t DATE_1996_12_31 = 9861;
-
     auto result = Q8Optimizer::execute(
         loader,
-        "AMERICA",
-        "BRAZIL",
+        regions::AMERICA,
+        nations::BRAZIL,
         "ECONOMY ANODIZED STEEL",
-        DATE_1995_01_01,
-        DATE_1996_12_31
+        thunderduck::tpch::constants::dates::D1995_01_01,
+        thunderduck::tpch::constants::dates::D1996_12_31
     );
 
     // 结果用于验证

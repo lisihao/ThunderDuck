@@ -6,9 +6,12 @@
  */
 
 #include "tpch_config_v33.h"
+#include "tpch_constants.h"
 #include <cstring>
 #include <cstdlib>
 #include <thread>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -164,7 +167,7 @@ namespace TPCHConfigFactory {
 
 QueryConfig q5_default() {
     return ConfigBuilder()
-        .string_val("region", "ASIA")
+        .string_val("region", regions::ASIA)
         .date_range("order_date", "1994-01-01", "1995-01-01", true, false)
         .thread_count(0)  // 自动
         .build();
@@ -172,7 +175,7 @@ QueryConfig q5_default() {
 
 QueryConfig q7_default() {
     return ConfigBuilder()
-        .string_set("nations", {"FRANCE", "GERMANY"})
+        .string_set("nations", {nations::FRANCE, nations::GERMANY})
         .date_range("ship_date", "1995-01-01", "1996-12-31", true, true)
         .thread_count(0)
         .build();

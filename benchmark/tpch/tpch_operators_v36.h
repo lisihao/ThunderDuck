@@ -1,6 +1,9 @@
 /**
  * ThunderDuck TPC-H V36 优化算子
  *
+ * @deprecated 请使用通用别名 AvgSubqueryOptimizer 和 SetMembershipOptimizer
+ *             V36 版本特定命名仅为历史兼容性保留
+ *
  * 核心优化: 相关子查询解关联 (Correlated Subquery Decorrelation)
  *
  * 适用查询:
@@ -526,6 +529,28 @@ private:
 
 void run_q17_v36(TPCHDataLoader& loader);
 void run_q20_v36(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (用于跨版本复用)
+// ============================================================================
+
+/**
+ * AVG 子查询优化器
+ * - 预计算每个分组的平均值
+ * - 应用于外层查询的过滤条件
+ *
+ * 适用场景: Q17, Q2, Q18 等包含 AVG 子查询的场景
+ */
+using AvgSubqueryOptimizer = Q17Optimizer;
+
+/**
+ * 集合成员资格优化器
+ * - 预计算 SUM 聚合结果
+ * - 检查外层值是否满足阈值条件
+ *
+ * 适用场景: Q20, Q4 等包含 EXISTS/IN + 聚合的场景
+ */
+using SetMembershipOptimizer = Q20Optimizer;
 
 } // namespace ops_v36
 } // namespace tpch

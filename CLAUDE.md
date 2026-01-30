@@ -1,6 +1,6 @@
 # ThunderDuck 开发规范
 
-> **版本**: 1.3.0 | **更新日期**: 2026-01-30
+> **版本**: 1.4.0 | **更新日期**: 2026-01-30
 
 ## 项目概述
 
@@ -176,6 +176,44 @@ class NativeDoubleSIMDFilter { ... };
 - DuckDB 基线时间
 - ThunderDuck 优化版本时间
 - 时间尺度 Sketch (自动卷积: 秒→分→时→日)
+
+### 6. 算子注册硬性检查 (MUST)
+
+**所有实现的算子必须注册到优化器系统中才能被使用。**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 算子开发完整流程 (缺一不可)                                       │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. 头文件声明    tpch_operators_vXX.h: void run_qN_vXX(...)     │
+│ 2. 实现代码      tpch_operators_vXX.cpp: 算子逻辑                │
+│ 3. CMake 添加    benchmarks/CMakeLists.txt: 源文件列表           │
+│ 4. 优化器注册    tpch_query_optimizer.cpp: candidates 列表       │
+│                                                                 │
+│ ⚠️ 未注册到优化器的算子 = 不存在                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+注册示例：
+
+```cpp
+// tpch_query_optimizer.cpp - register_tpch_query_configs()
+case 12: {
+    config.candidates = {
+        {"V57", 1.2, 0, 0, [](TPCHDataLoader& l) { ops_v57::run_q12_v57(l); }},
+        {"V27", 0.9, 0, 0, [](TPCHDataLoader& l) { ops_v27::run_q12_v27(l); }}
+    };
+    break;
+}
+```
+
+**检查命令**：
+
+```bash
+# 验证声明与注册一致性
+grep "void run_q.*_v57" benchmark/tpch/tpch_operators_v57.h
+grep "run_q.*_v57" benchmark/tpch/tpch_query_optimizer.cpp
+```
 
 ## 通用算子设计规则 (铁律)
 

@@ -8,11 +8,14 @@
  */
 
 #include "tpch_operators_v44.h"
+#include "tpch_constants.h"
 #include <algorithm>
 #include <thread>
 #include <atomic>
 #include <vector>
 #include <cstring>
+
+using namespace thunderduck::tpch::constants;
 
 #ifdef __aarch64__
 #include <arm_acle.h>
@@ -35,7 +38,7 @@ void run_q3_v44(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t DATE_THRESHOLD = 9204;  // 1995-03-15
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
 
     // ========================================================================
     // Phase 1: 构建 BUILDING 客户位图

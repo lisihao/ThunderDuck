@@ -9,6 +9,10 @@
  * - GenerationDeduplicator: Generation Counter 去重
  * - ExactKPredicate: EXACT-K 谓词评估
  *
+ * @deprecated 专用类已迁移至通用别名:
+ *   - Q21GenericOptimizer → ExistsSubqueryOptimizer (通用别名)
+ *   - Q21CorrectOptimizer → CorrectExistsOptimizer (通用别名)
+ *
  * @version 48.0
  * @date 2026-01-29
  */
@@ -16,6 +20,7 @@
 #pragma once
 
 #include "tpch_data_loader.h"
+#include "tpch_constants.h"   // 统一常量
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -34,7 +39,7 @@ namespace ops_v48 {
  */
 struct Q21Config {
     // 目标国家
-    std::string target_nation = "SAUDI ARABIA";
+    std::string target_nation = constants::nations::SAUDI_ARABIA;
 
     // 订单状态过滤 (默认 'F' = 0)
     int8_t order_status_filter = 0;
@@ -216,6 +221,22 @@ public:
  */
 void run_q21_v48(TPCHDataLoader& loader);
 void run_q21_v48(TPCHDataLoader& loader, const Q21Config& config);
+
+// ============================================================================
+// 通用别名 (推荐使用)
+// ============================================================================
+
+/**
+ * ExistsSubqueryOptimizer - EXISTS 子查询优化器通用别名
+ * @note 推荐使用此别名以提高代码可读性
+ */
+using ExistsSubqueryOptimizer = Q21GenericOptimizer;
+
+/**
+ * CorrectExistsOptimizer - 正确实现的 EXISTS 优化器通用别名
+ * @note 推荐使用此别名以提高代码可读性
+ */
+using CorrectExistsOptimizer = Q21CorrectOptimizer;
 
 } // namespace ops_v48
 } // namespace tpch

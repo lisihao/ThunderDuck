@@ -4,6 +4,10 @@
  * 核心优化: 纯排序方案，完全避免 Hash Map
  * - Q21: 排序 + 单遍聚合
  * - Q20: 排序 + 单遍聚合
+ *
+ * @deprecated 专用类命名 (如 Q21OptimizerV3) 已废弃，请使用通用别名:
+ *   - Q21OptimizerV3 → PureSortAggregateOptimizer
+ *   - Q20OptimizerV4 → PureSortAggregateOptimizerV2
  */
 
 #pragma once
@@ -88,6 +92,13 @@ public:
 
 void run_q21_v39(TPCHDataLoader& loader);
 void run_q20_v39(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using PureSortAggregateOptimizer = Q21OptimizerV3;
+using PureSortAggregateOptimizerV2 = Q20OptimizerV4;
 
 } // namespace ops_v39
 } // namespace tpch

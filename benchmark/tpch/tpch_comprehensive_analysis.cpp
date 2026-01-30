@@ -120,13 +120,13 @@ void analyze_operators(TPCHDataLoader& loader) {
         auto result = measure([&]() {
             ops_v24::filter_to_sel_i32_gt(
                 li.l_shipdate.data(), li.count,
-                9204,  // 1995-03-15
+                dates::D1995_03_15,
                 out.data()
             );
         });
 
         size_t output_rows = ops_v24::filter_to_sel_i32_gt(
-            li.l_shipdate.data(), li.count, 9204, out.data());
+            li.l_shipdate.data(), li.count, dates::D1995_03_15, out.data());
 
         stats.push_back({
             "Filter i32 (>)",

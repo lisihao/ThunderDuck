@@ -10,11 +10,14 @@
 
 #include "tpch_operators_v35.h"
 #include "tpch_operators_v34.h"  // V34 for Q13
+#include "tpch_constants.h"      // 统一常量定义
 #include <algorithm>
 #include <numeric>
 #include <cmath>
 #include <iostream>
 #include <iomanip>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -30,7 +33,7 @@ void run_q3_v35(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
 
     // 日期常量
-    const int32_t DATE_1995_03_15 = 9204;  // 1995-03-15
+    const int32_t DATE_1995_03_15 = dates::D1995_03_15;
 
     // Phase 1: 过滤 customer (BUILDING) -> custkey 集合
     DirectArrayIndexBuilder<int8_t> building_customers;
@@ -153,13 +156,13 @@ void run_q8_v35(TPCHDataLoader& loader) {
     const auto& part = loader.part();
 
     // 日期范围
-    const int32_t DATE_1995_01_01 = 9131;
-    const int32_t DATE_1996_12_31 = 9861;
+    const int32_t DATE_1995_01_01 = dates::D1995_01_01;
+    const int32_t DATE_1996_12_31 = dates::D1996_12_31;
 
     // Phase 1: 找 AMERICA region 的国家
     int32_t america_regionkey = -1;
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "AMERICA") {
+        if (reg.r_name[i] == regions::AMERICA) {
             america_regionkey = reg.r_regionkey[i];
             break;
         }
@@ -178,7 +181,7 @@ void run_q8_v35(TPCHDataLoader& loader) {
         for (size_t i = 0; i < nat.count; ++i) {
             nation_keys.push_back(nat.n_nationkey[i]);
             in_america.push_back(nat.n_regionkey[i] == america_regionkey ? 1 : 0);
-            if (nat.n_name[i] == "BRAZIL") {
+            if (nat.n_name[i] == nations::BRAZIL) {
                 brazil_nationkey = nat.n_nationkey[i];
             }
         }
@@ -322,9 +325,9 @@ void run_q14_v35(TPCHDataLoader& loader) {
     const auto& part = loader.part();
     const auto& li = loader.lineitem();
 
-    // 日期范围
-    const int32_t DATE_1995_09_01 = 9374;
-    const int32_t DATE_1995_09_30 = 9403;
+    // 日期范围 (Q14: 1995年9月)
+    const int32_t DATE_1995_09_01 = dates::D1995_09_01;
+    const int32_t DATE_1995_10_01 = dates::D1995_10_01;
 
     // Phase 1: 使用 SIMDStringProcessor 批量检测 PROMO 前缀
     std::vector<bool> promo_results;
@@ -362,14 +365,14 @@ void run_q14_v35(TPCHDataLoader& loader) {
         size_t end = std::min(start + chunk_size, li.count);
         if (start >= li.count) break;
 
-        futures.push_back(pool.submit([&promo_revenue, &total_revenue, &li, &is_promo, DATE_1995_09_01, DATE_1995_09_30, start, end]() {
+        futures.push_back(pool.submit([&promo_revenue, &total_revenue, &li, &is_promo, DATE_1995_09_01, DATE_1995_10_01, start, end]() {
             int64_t local_promo = 0;
             int64_t local_total = 0;
 
             for (size_t i = start; i < end; ++i) {
                 // 过滤日期
                 if (li.l_shipdate[i] < DATE_1995_09_01 ||
-                    li.l_shipdate[i] > DATE_1995_09_30) continue;
+                    li.l_shipdate[i] > DATE_1995_10_01) continue;
 
                 // 计算 revenue
                 int64_t revenue = static_cast<int64_t>(li.l_extendedprice[i]) *
@@ -471,7 +474,7 @@ void run_q21_v35(TPCHDataLoader& loader) {
     // 找 SAUDI ARABIA nation
     int32_t saudi_nationkey = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "SAUDI ARABIA") {
+        if (nat.n_name[i] == nations::SAUDI_ARABIA) {
             saudi_nationkey = nat.n_nationkey[i];
             break;
         }

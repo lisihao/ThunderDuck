@@ -5,6 +5,7 @@
  */
 
 #include "tpch_operators_v25.h"
+#include "tpch_constants.h"
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -12,6 +13,8 @@
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -53,18 +56,27 @@ void ThreadPool::prewarm(size_t num_threads, size_t estimated_tasks) {
 }
 
 void ThreadPool::prewarm_for_query(size_t data_rows, const char* operation_type) {
+    // 线程池配置常量
+    constexpr size_t SMALL_DATA_THRESHOLD = 100000;
+    constexpr size_t MEDIUM_DATA_THRESHOLD = 1000000;
+    constexpr size_t SMALL_THREADS = 2;
+    constexpr size_t MEDIUM_THREADS = 4;
+    constexpr size_t LARGE_THREADS = 8;
+    constexpr size_t JOIN_EXTRA_THREADS = 2;
+    constexpr size_t MAX_THREADS = 10;
+
     size_t num_threads;
 
-    if (data_rows < 100000) {
-        num_threads = 2;
-    } else if (data_rows < 1000000) {
-        num_threads = 4;
+    if (data_rows < SMALL_DATA_THRESHOLD) {
+        num_threads = SMALL_THREADS;
+    } else if (data_rows < MEDIUM_DATA_THRESHOLD) {
+        num_threads = MEDIUM_THREADS;
     } else {
-        num_threads = 8;
+        num_threads = LARGE_THREADS;
     }
 
     if (operation_type && strcmp(operation_type, "join") == 0) {
-        num_threads = std::min<size_t>(num_threads + 2, 10);
+        num_threads = std::min<size_t>(num_threads + JOIN_EXTRA_THREADS, MAX_THREADS);
     }
 
     prewarm(num_threads, data_rows / num_threads);
@@ -349,18 +361,22 @@ void run_q3_v25(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t date_threshold = 9204;  // 1995-03-15
+    constexpr int32_t date_threshold = query_params::q3::ORDER_DATE_THRESHOLD;
+    constexpr size_t NUM_THREADS = 8;
 
     // 预热线程池
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // ===== Step 1: 构建 BUILDING 客户 hash set =====
+    constexpr int8_t BUILDING_SEGMENT_CODE = 1;  // Q3 market segment: BUILDING
+    constexpr size_t HASH_SIZE_DIVIDER = 5;
+
     WeakHashTable<uint32_t> building_cust_table;
-    building_cust_table.init(cust.count / 5);
+    building_cust_table.init(cust.count / HASH_SIZE_DIVIDER);
 
     for (size_t i = 0; i < cust.count; ++i) {
-        if (cust.c_mktsegment_code[i] == 1) {
+        if (cust.c_mktsegment_code[i] == BUILDING_SEGMENT_CODE) {
             building_cust_table.insert(cust.c_custkey[i], static_cast<uint32_t>(i));
         }
     }
@@ -438,7 +454,7 @@ void run_q3_v25(TPCHDataLoader& loader) {
                 const auto& info = valid_orders_table.get_value(entry);
 
                 __int128 rev = (__int128)li.l_extendedprice[li_idx] *
-                               (10000 - li.l_discount[li_idx]) / 10000;
+                               (fixedpoint::SCALE - li.l_discount[li_idx]) / fixedpoint::SCALE;
 
                 auto& r = local[orderkey];
                 r.revenue += static_cast<int64_t>(rev);
@@ -483,18 +499,21 @@ void run_q5_v25(TPCHDataLoader& loader) {
     const auto& nat = loader.nation();
     const auto& reg = loader.region();
 
-    constexpr int32_t date_lo = 8766;
-    constexpr int32_t date_hi = 9131;
+    constexpr int32_t date_lo = query_params::q5::DATE_LO;
+    constexpr int32_t date_hi = query_params::q5::DATE_HI;
+
+    constexpr size_t NUM_THREADS = 8;
+    constexpr size_t MAX_NATIONS = 32;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // ===== Step 1: ASIA nations =====
     WeakHashTable<int32_t> asia_nations;
-    asia_nations.init(32);
+    asia_nations.init(MAX_NATIONS);
 
     for (size_t i = 0; i < reg.count; ++i) {
-        if (reg.r_name[i] == "ASIA") {
+        if (reg.r_name[i] == query_params::q5::REGION) {
             int32_t rk = reg.r_regionkey[i];
             for (size_t j = 0; j < nat.count; ++j) {
                 if (nat.n_regionkey[j] == rk) {
@@ -583,7 +602,7 @@ void run_q5_v25(TPCHDataLoader& loader) {
 
                 if (supp_nation == cust_nation) {
                     __int128 rev = (__int128)li.l_extendedprice[i] *
-                                   (10000 - li.l_discount[i]) / 10000;
+                                   (fixedpoint::SCALE - li.l_discount[i]) / fixedpoint::SCALE;
                     local_rev[supp_nation] += static_cast<int64_t>(rev);
                 }
             }
@@ -607,14 +626,15 @@ void run_q6_v25(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     size_t n = li.count;
 
-    constexpr int32_t date_lo = 8766;
-    constexpr int32_t date_hi = 9131;
-    constexpr int64_t disc_lo = 500;
-    constexpr int64_t disc_hi = 700;
-    constexpr int64_t qty_hi = 240000;
+    constexpr int32_t date_lo = query_params::q6::DATE_LO;
+    constexpr int32_t date_hi = query_params::q6::DATE_HI;
+    constexpr int64_t disc_lo = query_params::q6::DISCOUNT_LO;
+    constexpr int64_t disc_hi = query_params::q6::DISCOUNT_HI;
+    constexpr int64_t qty_hi = query_params::q6::QUANTITY_THRESHOLD;
+    constexpr size_t NUM_THREADS = 8;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, n / 8);
+    pool.prewarm(NUM_THREADS, n / NUM_THREADS);
 
     const int32_t* shipdate = li.l_shipdate.data();
     const int64_t* discount = li.l_discount.data();
@@ -661,7 +681,7 @@ void run_q6_v25(TPCHDataLoader& loader) {
         [](int64_t a, int64_t b) { return a + b; }
     );
 
-    total /= 10000;
+    total /= fixedpoint::SCALE;
     asm volatile("" : "+r"(total) : : "memory");
 }
 
@@ -671,15 +691,20 @@ void run_q9_v25(TPCHDataLoader& loader) {
     const auto& part = loader.part();
     const auto& supp = loader.supplier();
 
+    constexpr size_t NUM_THREADS = 8;
+
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // ===== Step 1: green parts =====
+    constexpr const char* COLOR_FILTER = "green";  // Q9: parts with 'green' in name
+    constexpr size_t HASH_SIZE_DIVIDER = 10;
+
     WeakHashTable<uint32_t> green_parts;
-    green_parts.init(part.count / 10);
+    green_parts.init(part.count / HASH_SIZE_DIVIDER);
 
     for (size_t i = 0; i < part.count; ++i) {
-        if (part.p_name[i].find("green") != std::string::npos) {
+        if (part.p_name[i].find(COLOR_FILTER) != std::string::npos) {
             green_parts.insert(part.p_partkey[i], static_cast<uint32_t>(i));
         }
     }
@@ -692,11 +717,16 @@ void run_q9_v25(TPCHDataLoader& loader) {
     }
 
     // ===== Step 3: orderkey -> year =====
+    constexpr int32_t BASE_YEAR = 1970;
+    constexpr int32_t START_YEAR = 1992;
+    constexpr int32_t NUM_YEARS = 10;
+    constexpr int32_t DAYS_PER_YEAR = 365;
+
     WeakHashTable<int32_t> order_to_year;
     order_to_year.init(ord.count);
     for (size_t i = 0; i < ord.count; ++i) {
-        int32_t year = (ord.o_orderdate[i] / 365) + 1970 - 1992;
-        if (year >= 0 && year < 10) {
+        int32_t year = (ord.o_orderdate[i] / DAYS_PER_YEAR) + BASE_YEAR - START_YEAR;
+        if (year >= 0 && year < NUM_YEARS) {
             order_to_year.insert(ord.o_orderkey[i], year);
         }
     }
@@ -719,7 +749,6 @@ void run_q9_v25(TPCHDataLoader& loader) {
     if (num_threads == 0) num_threads = 1;
 
     constexpr size_t NUM_NATIONS = 25;
-    constexpr size_t NUM_YEARS = 10;
 
     std::vector<std::array<std::array<int64_t, NUM_YEARS>, NUM_NATIONS>> thread_profits(num_threads);
     for (auto& arr : thread_profits) {
@@ -754,7 +783,7 @@ void run_q9_v25(TPCHDataLoader& loader) {
                 if (year < 0 || year >= static_cast<int32_t>(NUM_YEARS)) continue;
 
                 __int128 ep_disc = (__int128)li.l_extendedprice[i] *
-                                   (10000 - li.l_discount[i]) / 10000;
+                                   (fixedpoint::SCALE - li.l_discount[i]) / fixedpoint::SCALE;
                 local_profit[nation][year] += static_cast<int64_t>(ep_disc);
             }
         });
@@ -783,11 +812,12 @@ void run_q14_v25(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     const auto& part = loader.part();
 
-    constexpr int32_t date_lo = 9374;  // 1995-09-01
-    constexpr int32_t date_hi = 9404;  // 1995-10-01
+    constexpr int32_t date_lo = query_params::q14::DATE_LO;
+    constexpr int32_t date_hi = query_params::q14::DATE_HI;
+    constexpr size_t NUM_THREADS = 8;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // Step 1: 构建 part -> is_promo 的 WeakHashTable
     WeakHashTable<int8_t> part_promo;  // 1 = promo, 0 = not
@@ -830,7 +860,7 @@ void run_q14_v25(TPCHDataLoader& loader) {
                 if (entry < 0) continue;
 
                 __int128 val = (__int128)li.l_extendedprice[i] *
-                               (10000 - li.l_discount[i]) / 10000;
+                               (fixedpoint::SCALE - li.l_discount[i]) / fixedpoint::SCALE;
                 local_total += val;
 
                 if (part_promo.get_value(entry) == 1) {
@@ -866,11 +896,12 @@ void run_q10_v25(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t date_lo = 8674;  // 1993-10-01
-    constexpr int32_t date_hi = 8766;  // 1994-01-01
+    constexpr int32_t date_lo = query_params::q10::DATE_LO;
+    constexpr int32_t date_hi = query_params::q10::DATE_HI;
+    constexpr size_t NUM_THREADS = 8;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // Step 1: 过滤 orders 并构建 orderkey -> custkey 的 WeakHashTable
     WeakHashTable<int32_t> order_cust;
@@ -906,14 +937,14 @@ void run_q10_v25(TPCHDataLoader& loader) {
             const uint32_t* oh = li_orderkey_hash.data();
 
             for (size_t i = start; i < end; ++i) {
-                if (li.l_returnflag[i] != 2) continue;  // R = 2
+                if (li.l_returnflag[i] != returnflags::RETURNED) continue;
 
                 int32_t entry = order_cust.find_with_hash(li.l_orderkey[i], oh[i]);
                 if (entry < 0) continue;
 
                 int32_t custkey = order_cust.get_value(entry);
                 __int128 revenue = (__int128)li.l_extendedprice[i] *
-                                   (10000 - li.l_discount[i]) / 10000;
+                                   (fixedpoint::SCALE - li.l_discount[i]) / fixedpoint::SCALE;
                 local[custkey] += static_cast<int64_t>(revenue);
             }
         });
@@ -940,15 +971,16 @@ void run_q12_v25(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     const auto& ord = loader.orders();
 
-    constexpr int32_t date_lo = 8766;  // 1994-01-01
-    constexpr int32_t date_hi = 9131;  // 1995-01-01
-    constexpr int8_t MAIL = 5;
-    constexpr int8_t SHIP = 3;
-    constexpr int8_t URGENT = 0;
-    constexpr int8_t HIGH = 1;
+    constexpr int32_t date_lo = query_params::q12::DATE_LO;
+    constexpr int32_t date_hi = query_params::q12::DATE_HI;
+    constexpr int8_t MAIL = query_params::q12::SHIPMODE1;
+    constexpr int8_t SHIP = query_params::q12::SHIPMODE2;
+    constexpr int8_t URGENT = priorities::URGENT;
+    constexpr int8_t HIGH = priorities::HIGH;
+    constexpr size_t NUM_THREADS = 8;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // Step 1: 过滤 lineitem 并提取有效行
     std::vector<uint32_t> valid_li;
@@ -1046,17 +1078,18 @@ void run_q7_v25(TPCHDataLoader& loader) {
     const auto& supp = loader.supplier();
     const auto& nat = loader.nation();
 
-    constexpr int32_t date_lo = 9131;  // 1995-01-01
-    constexpr int32_t date_hi = 9861;  // 1996-12-31
+    constexpr int32_t date_lo = query_params::q7::DATE_LO;
+    constexpr int32_t date_hi = query_params::q7::DATE_HI;
+    constexpr size_t NUM_THREADS = 8;
 
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // 找 FRANCE/GERMANY nationkey
     int32_t france_key = -1, germany_key = -1;
     for (size_t i = 0; i < nat.count; ++i) {
-        if (nat.n_name[i] == "FRANCE") france_key = nat.n_nationkey[i];
-        if (nat.n_name[i] == "GERMANY") germany_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == query_params::q7::NATION1) france_key = nat.n_nationkey[i];
+        if (nat.n_name[i] == query_params::q7::NATION2) germany_key = nat.n_nationkey[i];
     }
 
     // Step 1: 构建 supplier -> nation WeakHashTable
@@ -1159,13 +1192,15 @@ void run_q7_v25(TPCHDataLoader& loader) {
                 if ((s_nat == france_key && c_nat == germany_key) ||
                     (s_nat == germany_key && c_nat == france_key)) {
 
-                    int32_t year = 1970 + li.l_shipdate[li_idx] / 365;
+                    constexpr int32_t BASE_YEAR = 1970;
+                    constexpr int32_t DAYS_PER_YEAR = 365;
+                    int32_t year = BASE_YEAR + li.l_shipdate[li_idx] / DAYS_PER_YEAR;
                     int64_t key = (static_cast<int64_t>(s_nat) << 32) |
                                   (static_cast<int64_t>(c_nat) << 16) |
                                   year;
 
                     __int128 volume = (__int128)li.l_extendedprice[li_idx] *
-                                      (10000 - li.l_discount[li_idx]) / 10000;
+                                      (fixedpoint::SCALE - li.l_discount[li_idx]) / fixedpoint::SCALE;
                     local[key] += static_cast<int64_t>(volume);
                 }
             }
@@ -1193,8 +1228,10 @@ void run_q18_v25(TPCHDataLoader& loader) {
     const auto& li = loader.lineitem();
     const auto& ord = loader.orders();
 
+    constexpr size_t NUM_THREADS = 8;
+
     auto& pool = ThreadPool::instance();
-    pool.prewarm(8, li.count / 8);
+    pool.prewarm(NUM_THREADS, li.count / NUM_THREADS);
 
     // Step 1: 使用 WeakHashTable 计算 orderkey -> sum(quantity)
     // 注: Q18 是高基数 GROUP BY，保持单线程避免合并开销 (Architect 建议)
@@ -1233,8 +1270,8 @@ void run_q18_v25(TPCHDataLoader& loader) {
         order_qty_map[li.l_orderkey[j]] += li.l_quantity[j];
     }
 
-    // Step 2: 过滤 sum > 300 * 10000
-    constexpr int64_t qty_threshold = 300 * 10000;
+    // Step 2: 过滤 sum > threshold
+    constexpr int64_t qty_threshold = query_params::q18::QTY_THRESHOLD;
 
     WeakHashTable<int8_t> large_orders;  // orderkey -> 1 (存在标记)
     large_orders.init(order_qty_map.size() / 10);
@@ -1275,8 +1312,9 @@ void run_q18_v25(TPCHDataLoader& loader) {
     }
 
     // Step 4: 排序取 Top 100
+    constexpr size_t RESULT_LIMIT = query_params::q18::RESULT_LIMIT;
     std::partial_sort(results.begin(),
-                      results.begin() + std::min<size_t>(100, results.size()),
+                      results.begin() + std::min<size_t>(RESULT_LIMIT, results.size()),
                       results.end(),
                       [](const Q18Result& a, const Q18Result& b) {
                           if (a.totalprice != b.totalprice)
@@ -1284,7 +1322,7 @@ void run_q18_v25(TPCHDataLoader& loader) {
                           return a.orderdate < b.orderdate;
                       });
 
-    if (results.size() > 100) results.resize(100);
+    if (results.size() > RESULT_LIMIT) results.resize(RESULT_LIMIT);
 
     asm volatile("" : : "r"(results.data()) : "memory");
 }

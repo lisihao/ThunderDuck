@@ -6,10 +6,13 @@
  */
 
 #include "tpch_operators_v49.h"
+#include "tpch_constants.h"
 #include <algorithm>
 #include <future>
 #include <queue>
 #include <unordered_map>
+
+using namespace thunderduck::tpch::constants;
 
 namespace thunderduck {
 namespace tpch {
@@ -24,7 +27,7 @@ void run_q3_v49(TPCHDataLoader& loader) {
     const auto& ord = loader.orders();
     const auto& cust = loader.customer();
 
-    constexpr int32_t DATE_THRESHOLD = 9204;  // 1995-03-15
+    constexpr int32_t DATE_THRESHOLD = dates::D1995_03_15;
     constexpr size_t FINAL_TOP_N = 10;
     constexpr size_t LOCAL_TOP_K = 32;  // 每线程保留 top-K (> FINAL_TOP_N)
 

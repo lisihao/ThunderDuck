@@ -29,6 +29,8 @@
 #include "tpch_executor.h"
 #include "tpch_queries.h"
 #include "tpch_report.h"
+#include "tpch_query_optimizer.h"
+#include "../../include/thunderduck/system_catalog.h"
 
 #include "duckdb.hpp"
 
@@ -47,6 +49,7 @@ struct Options {
     std::string output;       // 空 = 默认路径
     bool quiet = false;
     bool help = false;
+    bool show_catalog = false;  // 显示系统表
 };
 
 void print_help() {
@@ -62,6 +65,7 @@ ThunderDuck TPC-H Benchmark v1.0
   --iterations <n>      测量迭代次数 (默认: 10)
   --warmup <n>          预热次数 (默认: 2)
   --output <file>       报告输出路径
+  --show-catalog        显示系统表所有数据
   -q, --quiet           安静模式
   -h, --help            显示帮助
 
@@ -101,6 +105,8 @@ Options parse_args(int argc, char* argv[]) {
             opts.warmup = std::stoul(argv[++i]);
         } else if (arg == "--output" && i + 1 < argc) {
             opts.output = argv[++i];
+        } else if (arg == "--show-catalog") {
+            opts.show_catalog = true;
         } else {
             std::cerr << "未知选项: " << arg << std::endl;
             opts.help = true;
@@ -119,6 +125,22 @@ int main(int argc, char* argv[]) {
 
     if (opts.help) {
         print_help();
+        return 0;
+    }
+
+    // 初始化系统表 (注册所有算子)
+    thunderduck::tpch::register_tpch_query_configs();
+
+    // 设置持久化路径 (使用 DuckDB 格式)
+    thunderduck::catalog::catalog().set_persistence_path(".solar/system_catalog.duckdb");
+
+    // 显示系统表
+    if (opts.show_catalog) {
+        thunderduck::catalog::catalog().print_all();
+        // 保存到 DuckDB
+        if (thunderduck::catalog::catalog().save_to_file(".solar/system_catalog.duckdb")) {
+            std::cout << "✓ System catalog saved to .solar/system_catalog.duckdb\n";
+        }
         return 0;
     }
 
@@ -204,6 +226,9 @@ int main(int argc, char* argv[]) {
                       std::to_string(opts.scale_factor) + ".md";
     }
     generate_report(result, output_path);
+
+    // 保存性能数据到系统表 (持久化 Sketch 数据)
+    thunderduck::catalog::catalog().save_to_file(".solar/system_catalog.duckdb");
 
     // 成功标准检查
     if (!opts.quiet) {

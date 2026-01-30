@@ -6,6 +6,9 @@
  * - O(1) 订单状态查找
  * - DynamicBitmapFilter 消除硬编码
  *
+ * @deprecated 专用类命名 (如 Q21OptimizerV4) 已废弃，请使用通用别名:
+ *   - Q21OptimizerV4 → PrecomputeDirectArrayOptimizer
+ *
  * @version 41.0
  * @date 2026-01-29
  */
@@ -71,6 +74,12 @@ public:
  * V41 Q21 查询入口
  */
 void run_q21_v41(TPCHDataLoader& loader);
+
+// ============================================================================
+// 通用别名 (推荐使用，取代查询专用命名)
+// ============================================================================
+
+using PrecomputeDirectArrayOptimizer = Q21OptimizerV4;
 
 } // namespace ops_v41
 } // namespace tpch
