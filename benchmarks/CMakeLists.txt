@@ -87,6 +87,21 @@ set(TPCH_SOURCES
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v56.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v57.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v58.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v59.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v60.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v61.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v62.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v63.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v64.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v65.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v66.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v67.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v68.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v69.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v70.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v71.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v88.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v92.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_queries.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_query_optimizer.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_report.cpp
@@ -133,6 +148,8 @@ add_executable(show_catalog ${CMAKE_SOURCE_DIR}/benchmark/show_system_catalog.cp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v56.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v57.cpp
     ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v58.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v59.cpp
+    ${CMAKE_SOURCE_DIR}/benchmark/tpch/tpch_operators_v88.cpp
 )
 target_link_libraries(show_catalog thunderduck duckdb)
 target_include_directories(show_catalog PRIVATE

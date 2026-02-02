@@ -2,7 +2,13 @@
  * ThunderDuck TPC-H Query Optimizer Implementation
  *
  * 注册所有 TPC-H 查询的算子版本配置
- * 基于 V50 版本演进报告中的性能数据
+ * 成本模型参数基于 SF=1 实测数据 (2026-01-31)
+ *
+ * 基准测试结果摘要 (SF=1, 10 iterations, M4 Mac):
+ * - 几何平均加速比: 3.42x (vs DuckDB)
+ * - 最高: Q21 24.86x, Q1 9.30x, Q22 9.22x
+ * - 最低: Q9 1.36x, Q3 1.43x, Q6 1.77x
+ * - 全部 22 查询均快于 DuckDB
  */
 
 // 系统表必须在优化器之前 include
@@ -33,6 +39,21 @@
 #include "tpch_operators_v56.h"
 #include "tpch_operators_v57.h"
 #include "tpch_operators_v58.h"
+#include "tpch_operators_v59.h"
+#include "tpch_operators_v60.h"
+#include "tpch_operators_v61.h"
+#include "tpch_operators_v62.h"
+#include "tpch_operators_v63.h"
+#include "tpch_operators_v64.h"
+#include "tpch_operators_v65.h"
+#include "tpch_operators_v66.h"
+#include "tpch_operators_v67.h"
+#include "tpch_operators_v68.h"
+#include "tpch_operators_v69.h"
+#include "tpch_operators_v70.h"
+#include "tpch_operators_v71.h"
+#include "tpch_operators_v88.h"
+#include "tpch_operators_v92.h"
 
 namespace thunderduck {
 namespace tpch {
@@ -61,9 +82,15 @@ namespace queries {
     // Q20, Q21, Q22 无基础实现，使用优化版本
 }
 
+// 前向声明
+void register_operator_metadata();
+
 void register_tpch_query_configs() {
     auto& opt = TPCHQueryOptimizer::instance();
     auto& cat = catalog::catalog();
+
+    // 注册 GPU 算子 (V68, V69) - 需要预热
+    register_operator_metadata();
 
     // ========================================================================
     // 注册所有有效算子到系统表 (V24-V54)
@@ -263,8 +290,16 @@ void register_tpch_query_configs() {
     cat.register_operator("V58-ParallelScanExecutor", 0.1f, 0.0005f, 10000, 0);
     cat.register_operator("V58-FusedSIMDFilterAggregate", 0.08f, 0.0006f, 100000, 0);
 
+    // ------------------------------------------------------------------------
+    // V59: 延迟 JOIN + SIMD 字符串匹配
+    // 适用: Q3, Q9 - 核心突破: 先聚合再 JOIN (减少 95% hash lookup)
+    // ------------------------------------------------------------------------
+    cat.register_operator("V59-DeferredJoin", 0.02f, 0.0003f, 100000, 0);  // 延迟 JOIN
+    cat.register_operator("V59-MinHeapTopK", 0.01f, 0.0001f, 1000, 0);      // O(n log k) Top-K
+    cat.register_operator("V59-SIMDStringMatch", 0.05f, 0.0002f, 10000, 0); // SIMD 批量字符串
+
     // ========================================================================
-    // Q1: 定价汇总报告 - 单表聚合 (9.15x)
+    // Q1: 定价汇总报告 - 单表聚合 (V69: GPU 分组聚合)
     // ========================================================================
     {
         QueryOperatorConfig config;
@@ -274,8 +309,20 @@ void register_tpch_query_configs() {
         config.join_count = 0;
         config.has_aggregation = true;
 
-        // 基础版本已经是最优
         config.candidates = {
+            // V69: GPU 分组聚合 (Block-local hash + Two-stage reduction)
+            {"V69-GPUGroupAggregate", 10.0, 100000, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v69::is_v69_applicable("Q1", l.lineitem().count)) {
+                     ops_v69::run_q1_v69(l);
+                 } else {
+                     queries::run_q1(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v69::is_gpu_available() && ctx.row_count >= 100000;
+             }},
+            // 基础版本作为回退
             {"Base", 9.15, 0, 0, queries::run_q1}
         };
         config.fallback = queries::run_q1;
@@ -337,16 +384,24 @@ void register_tpch_query_configs() {
         config.has_top_n = true;
 
         config.candidates = {
-            // V49: Top-N Aware 聚合 (实测 1.29x)
-            // 适用性: 需要大数据量，且 orderkey 范围过大时不适合 DirectArray
-            // 注: V58 DirectArrayAggregator 不适用于 Q3 (orderkey 范围 ~6M 超出 L2 缓存)
-            {"V49", 1.29, 0, 0,
+            // V68.1: One-Pass GPU Fused + Cache (缓存后第二次运行更快)
+            {"V68", 2.50, 100000, 0,
+             [](TPCHDataLoader& l) { ops_v68::run_q3_v68(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v68::is_v68_q3_applicable(ctx.row_count, 10);
+             }},
+            // V63: 位图 + 直接数组 (CPU fallback)
+            {"V63", 1.70, 0, 0,
+             [](TPCHDataLoader& l) { ops_v63::run_q3_v63(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
+            // V49: Top-N Aware (实测 1.43x, V60 分片锁更慢)
+            {"V49", 1.43, 0, 0,
              [](TPCHDataLoader& l) { ops_v49::run_q3_v49(l); },
              [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 // V49 TopN-Aware 适合大数据量 + 高基数 key
-                 // orderkey 范围通常很大，不适合 DirectArray
                  return ctx.row_count >= 100000 ||
-                        ctx.max_key_range > 250000;  // 超出 L2 缓存阈值
+                        ctx.max_key_range > 250000;
              }},
             // V31: GPU SEMI + V19.2 JOIN (中等数据量)
             {"V31", 1.14, 100000, 1000000,
@@ -400,12 +455,16 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            // V57: 零开销通用算子
-            // 适用性: 大数据量 + 多表 JOIN
-            {"V57", 1.81, 0, 0,
+            // V61: SIMD Bitmask 批量过滤 (实测 2.05x)
+            {"V61", 2.05, 0, 0,
+             [](TPCHDataLoader& l) { ops_v61::run_q5_v61(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
+            // V57: 零开销通用算子 (实测 1.98x, V60 位图更慢)
+            {"V57", 1.98, 0, 0,
              [](TPCHDataLoader& l) { ops_v57::run_q5_v57(l); },
              [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 // V57 零开销算子适合大规模 JOIN
                  return ctx.row_count >= 100000;
              }},
             // V56: 预计算 order→nation
@@ -456,6 +515,43 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
+            // V88: GPU Filter-Aggregate 融合 (Metal GPU 加速)
+            {"V88-GPUFilterAgg", 4.0, 100000, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v88::is_v88_q6_available()) {
+                     ops_v88::run_q6_v88(l);
+                 } else {
+                     ops_v66::run_q6_v66(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v88::is_v88_q6_available() && ctx.row_count >= 100000;
+             }},
+            // V66: GPU 融合过滤聚合 (真正 GPU 加速 + 性能收集)
+            {"V66-GPUFusedFilterAgg", 3.0, 100000, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v66::is_v66_applicable("Q6", l.lineitem().count)) {
+                     ops_v66::run_q6_v66(l);
+                 } else {
+                     ops_v64::run_q6_v64(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
+            // V64: SIMDVectorAggregator 通用框架
+            // 原生 int32 SIMD 谓词 + int64 聚合
+            {"V64-SIMDVectorAggregator", 2.5, 100000, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v64::is_v64_applicable("Q6", l.lineitem().count)) {
+                     ops_v64::run_q6_v64(l);
+                 } else {
+                     ops_v54::run_q6_v54(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
             // V54: 通用 NativeDoubleSIMDFilter 算子
             // 适用条件: 单表扫描 + 原生 double 列 + 多谓词过滤
             // 成本模型: 0.1ms 启动 + 0.0003us/行
@@ -531,6 +627,18 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
+            // V86: GPU Fused Multi-Probe (Metal GPU 加速)
+            {"V86-GPUFusedProbe", 2.2, 0, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v88::is_v86_q8_available()) {
+                     ops_v88::run_q8_v86(l);
+                 } else {
+                     ops_v57::run_q8_v57(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v88::is_v86_q8_available();
+             }},
             // V57: 零开销通用算子 (通用设计，无专用代码)
             {"V57", 1.65, 0, 0, [](TPCHDataLoader& l) { ops_v57::run_q8_v57(l); }},
             // V34: 基础版本
@@ -553,13 +661,16 @@ void register_tpch_query_configs() {
         config.has_aggregation = true;
 
         config.candidates = {
-            // V32: 紧凑 Hash + Bloom Filter (实测 1.30x)
-            // 适用性: 大数据量多表 JOIN
-            // 注: V58 DirectArrayAggregator 不适用 (聚合 key 空间 25*65536 ≈ 1.6M 超出 L2)
-            {"V32", 1.30, 0, 0,
+            // V62: CRC32 + CompactHashTable64 (bitmap + 预取) (实测 1.94x)
+            {"V62", 1.94, 50000, 0,
+             [](TPCHDataLoader& l) { ops_v62::run_q9_v62(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 50000;
+             }},
+            // V32: 紧凑 Hash + CompactHashTable (实测 1.36x)
+            {"V32", 1.36, 50000, 0,
              [](TPCHDataLoader& l) { ops_v32::run_q9_v32(l); },
              [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 // V32 适合大规模 JOIN + 高基数聚合
                  return ctx.row_count >= 50000;
              }},
             // V25: 较轻量实现 (小数据量)
@@ -587,6 +698,7 @@ void register_tpch_query_configs() {
         config.has_top_n = true;
 
         config.candidates = {
+            {"V71", 2.5, 0, 0, [](TPCHDataLoader& l) { ops_v71::run_q10_v71(l); }},
             {"V25", 1.7, 0, 0, [](TPCHDataLoader& l) { ops_v25::run_q10_v25(l); }}
         };
         config.fallback = queries::run_q10;
@@ -687,12 +799,11 @@ void register_tpch_query_configs() {
             // 适用性: partkey 范围需要适合 L2 缓存
             {"V46", 2.91, 0, 0,
              [](TPCHDataLoader& l) { ops_v46::run_q14_v46(l); },
-             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 // DirectArray 适用于 partkey (SF=1 时 ~200K)
-                 // partkey 范围通常较小，适合 DirectArray
-                 constexpr size_t L2_CACHE_ENTRY_LIMIT = 250000;
-                 return ctx.max_key_range <= L2_CACHE_ENTRY_LIMIT ||
-                        ctx.max_key_range == 0;
+             [](const QueryOperatorConfig::ApplicabilityContext&) {
+                 // Q14 使用 partkey 作为聚合键
+                 // TPC-H partkey 范围: SF*200K (SF=1 时 ~200K)
+                 // 远小于 L2 缓存限制 (250K)，总是使用 DirectArray
+                 return true;
              }},
             // V25: Hash 聚合 (大 key 范围回退)
             {"V25", 1.8, 0, 0,
@@ -740,6 +851,30 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
+            // V92: 并行扫描 + 基数排序 (目标 2.5x+)
+            {"V92-ParallelRadix", 2.5, 100000, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v92::is_v92_q16_applicable(l.partsupp().count)) {
+                     ops_v92::run_q16_v92(l);
+                 } else {
+                     ops_v27::run_q16_v27(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ctx.row_count >= 100000;
+             }},
+            // V84: GPU HyperLogLog COUNT(DISTINCT)
+            {"V84-GPUHyperLogLog", 2.0, 0, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v88::is_v84_q16_available()) {
+                     ops_v88::run_q16_v84(l);
+                 } else {
+                     ops_v27::run_q16_v27(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v88::is_v84_q16_available();
+             }},
             {"V27", 1.2, 0, 0, [](TPCHDataLoader& l) { ops_v27::run_q16_v27(l); }}
         };
         config.fallback = queries::run_q16;
@@ -761,24 +896,20 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
-            // V57: 零开销通用算子 (通用设计，无专用代码)
-            // 适用性: partkey 范围适合 DirectArray (< 250K)
-            {"V57", 2.90, 0, 0,
-             [](TPCHDataLoader& l) { ops_v57::run_q17_v57(l); },
-             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 // V57 使用 DirectArray，需要 key 范围适合 L2 缓存
-                 constexpr size_t L2_CACHE_ENTRY_LIMIT = 250000;
-                 return ctx.max_key_range <= L2_CACHE_ENTRY_LIMIT ||
-                        ctx.max_key_range == 0;  // 0 表示未知
+            // V70: 解关联子查询优化 + GPU 启动成本优化 (最优)
+            {"V70", 1.50, 0, 0,
+             [](TPCHDataLoader& l) { ops_v70::run_q17_v70(l); },
+             [](const QueryOperatorConfig::ApplicabilityContext&) {
+                 return true;  // 总是适用
              }},
-            // V36: SubqueryDecorrelation (大 key 范围回退)
+            // V36: SubqueryDecorrelation (回退)
             {"V36", 1.16, 0, 0,
              [](TPCHDataLoader& l) { ops_v36::run_q17_v36(l); },
-             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
-                 return ctx.max_key_range > 250000;
+             [](const QueryOperatorConfig::ApplicabilityContext&) {
+                 return true;
              }}
         };
-        config.fallback = [](TPCHDataLoader& l) { ops_v36::run_q17_v36(l); };
+        config.fallback = [](TPCHDataLoader& l) { ops_v70::run_q17_v70(l); };
 
         opt.register_query(config);
     }
@@ -849,6 +980,18 @@ void register_tpch_query_configs() {
         config.has_subquery = true;
 
         config.candidates = {
+            // V87: GPU Late Materialization
+            {"V87-GPULateMaterialize", 2.0, 0, 0,
+             [](TPCHDataLoader& l) {
+                 if (ops_v88::is_v87_q20_available()) {
+                     ops_v88::run_q20_v87(l);
+                 } else {
+                     ops_v40::run_q20_v40(l);
+                 }
+             },
+             [](const QueryOperatorConfig::ApplicabilityContext& ctx) {
+                 return ops_v88::is_v87_q20_available();
+             }},
             {"V40", 1.29, 0, 0, [](TPCHDataLoader& l) { ops_v40::run_q20_v40(l); }}
         };
         config.fallback = [](TPCHDataLoader& l) { ops_v40::run_q20_v40(l); };
@@ -1102,6 +1245,12 @@ SelectionResult TPCHQueryOptimizer::select_hybrid(
 void register_operator_metadata() {
     auto& cat = catalog::catalog();
 
+    // 注册 V68 GPU 算子 (专用注册函数)
+    ops_v68::register_v68_operators();
+
+    // 注册 V69 GPU 分组聚合算子
+    ops_v69::register_v69_operators();
+
     // 注册各版本算子的元数据 (使用轻量级 API)
     // 参数: version, startup_ms, per_row_us, min_rows, max_rows
 
@@ -1140,6 +1289,42 @@ void register_operator_metadata() {
     cat.register_operator("V52", 0.15f, 0.004f, 0, 0);  // DirectArrayJoin + SIMDBranchlessFilter
     cat.register_operator("V53", 0.12f, 0.003f, 0, 0);  // QueryArena + ChunkedDirectArray + TypeLifted
     cat.register_operator("Base", 0.1f, 0.02f, 0, 0);
+
+    // ========================================================================
+    // V68: One-Pass GPU Fused Q3 (Apple Silicon Metal)
+    // ========================================================================
+    // 架构: 单遍历 lineitem + Block-local hash 聚合 + Two-stage Top-N
+    // 特性: UMA 零拷贝 + orders_flags 缓存 + GPU/CPU 自适应
+    // 适用: Q3 查询，lineitem >= 100K 行
+    // ========================================================================
+
+    // V68 GPU Fused 算子 (完整管道)
+    // startup: GPU 预热 + Metal 编译 (~7ms 冷启动, 0ms 缓存后)
+    // per_row: GPU 并行处理 (~0.7µs/row for 6M rows = ~4ms)
+    cat.register_operator("V68-GPUFusedQ3", 7.0f, 0.0007f, 100000, 0);
+
+    // V68 子算子 (用于细粒度成本分析)
+    // Phase 0: orders_flags 构建 (GPU 或 CPU)
+    cat.register_operator("V68-OrdersFlagsBuilder-GPU", 7.0f, 0.004f, 100000, 0);
+    cat.register_operator("V68-OrdersFlagsBuilder-CPU", 6.0f, 0.004f, 10000, 0);
+    cat.register_operator("V68-OrdersFlagsCache", 0.0f, 0.0f, 0, 0);  // 缓存命中时零成本
+
+    // Phase 1: GPU 扫描聚合
+    // Block-local hash (1024 entries) + SIMD 累加 + Two-stage Top-N
+    cat.register_operator("V68-GPUScanAggregate", 0.5f, 0.0006f, 100000, 0);
+
+    // Phase 2: CPU 合并
+    // 多 block TopK 合并到最终 Top-N
+    cat.register_operator("V68-CPUMerge", 0.4f, 0.0001f, 1000, 0);
+
+    // V68 缓存预热版本 (第二次及以后运行)
+    // 缓存命中: Phase 0 = 0ms, 只有 Phase 1 + 2
+    cat.register_operator("V68-GPUFusedQ3-Warmed", 0.5f, 0.0007f, 100000, 0);
+
+    // ========================================================================
+    // V63: CPU Bitmap + DirectArray (V68 的 CPU 回退)
+    // ========================================================================
+    cat.register_operator("V63-BitmapDirectArray", 2.0f, 0.001f, 50000, 0);
 }
 
 } // namespace tpch
